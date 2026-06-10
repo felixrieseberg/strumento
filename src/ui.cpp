@@ -59,6 +59,9 @@ static int      g_ctrlScroll = 0;     // px offset into Controls content
 static int      g_ctrlMax    = 0;
 static bool     g_dragging   = false;
 static int      g_dragStartY = 0, g_dragStartScroll = 0;
+static int      g_dragStartX = 0;
+static int      g_homePage   = 0;       // 0=dial 1=tally 2=clock
+static constexpr int HOME_PAGES = 3;
 
 struct Btn { int x,y,w,h; std::function<void()> tap; };
 static std::vector<Btn> g_btns;
@@ -219,7 +222,61 @@ static void keys(std::initializer_list<std::pair<const char*,std::function<void(
   }
 }
 
-// ── HOME ─────────────────────────────────────────────────────────────────────
+// ── HOME ── swipeable pages ──────────────────────────────────────────────────
+static void homeDial(const lmcloud::State& s,bool on,float temp,
+                     lmcloud::BoilerStatus cstat){
+  const int cx=W/2, cy=106, r=66;
+  float range = s.coffeeTempMax - s.coffeeTempMin;
+  bezel(cx,cy,r,FACE());
+  ticks(cx,cy,r, (int)(range*2),(int)(range/2), 135,270, INK_40,FG());
+  g_can.fillRect(cx-1, cy-r+2, 3, 8, LM_RED);
+  if (on && temp>0){
+    float frac=constrain((temp-s.coffeeTempMin)/range,0.f,1.f);
+    float a=(135+270*frac)*DEG_TO_RAD;
+    g_can.drawWedgeLine(cx+cosf(a)*(r-22),cy+sinf(a)*(r-22),
+                        cx+cosf(a)*(r-6), cy+sinf(a)*(r-6), 1.5f,0.5f, LM_RED);
+    char tbuf[8]; snprintf(tbuf,sizeof tbuf,"%.0f",temp);
+    g_can.setFont(&F_NUM_LG); g_can.setTextColor(FG());
+    g_can.setTextDatum(middle_center);
+    int tw=g_can.textWidth(tbuf);
+    g_can.drawString(tbuf, cx, cy-2);
+    ring(cx+tw/2+6, cy-16, 3,2, INK_40, FACE());
+    tracked(cx, cy+30, boilerWord(cstat), 3, FG(), &F_LABEL, middle_center);
+  } else {
+    tracked(cx,cy-2,
+            s.machine==lmcloud::MachineStatus::StandBy?"STANDBY":"OFFLINE",
+            4,INK_40,&F_LABEL,middle_center);
+    g_can.drawSpot(cx,cy+28,3,INK_40);
+  }
+}
+
+static void homeTally(const lmcloud::State& s){
+  const int cx=W/2, cy=106, r=66;
+  bezel(cx,cy,r,FACE());
+  char n[10]; snprintf(n,sizeof n,"%d",s.totalCoffee);
+  g_can.setFont(&F_NUM_LG); g_can.setTextColor(FG());
+  g_can.setTextDatum(middle_center);
+  g_can.drawString(n,cx,cy-8);
+  tracked(cx,cy+26,"COFFEES",4,INK_40,&F_LABEL,middle_center);
+  // last shot mark on the rim — fraction of a 60s sweep
+  if (s.lastShotSec>0){
+    float a=(-90+constrain(s.lastShotSec,0.f,60.f)*6.f)*DEG_TO_RAD;
+    g_can.drawSpot(cx+cosf(a)*(r-6), cy+sinf(a)*(r-6), 3, LM_RED);
+  }
+}
+
+static void homeClock(const lmcloud::State&){
+  const int cx=W/2, cy=106, r=66;
+  bezel(cx,cy,r,FACE());
+  ticks(cx,cy,r, 60,5, -90,360, INK_40,FG());
+  time_t now=time(nullptr); struct tm t; localtime_r(&now,&t);
+  float ha=(-90 + (t.tm_hour%12 + t.tm_min/60.f)*30.f)*DEG_TO_RAD;
+  float ma=(-90 +  t.tm_min*6.f)*DEG_TO_RAD;
+  g_can.drawWedgeLine(cx,cy,cx+cosf(ha)*(r-30),cy+sinf(ha)*(r-30),2.5f,1.0f,FG());
+  g_can.drawWedgeLine(cx,cy,cx+cosf(ma)*(r-12),cy+sinf(ma)*(r-12),1.5f,0.5f,LM_RED);
+  g_can.drawSpot(cx,cy,4,INK); g_can.drawSpot(cx,cy,2,BRASS_HI);
+}
+
 static void renderHome(const lmcloud::State& s){
   g_can.fillScreen(BG()); vignette(); g_btns.clear();
   header(s);
@@ -229,40 +286,20 @@ static void renderHome(const lmcloud::State& s){
   float temp = g_dbgOn ? 93.f : s.coffeeTarget;
   auto cstat = g_dbgOn ? lmcloud::BoilerStatus::Ready : s.coffeeStatus;
 
-  // ── main dial ──
-  const int cx=W/2, cy=108, r=70;
-  float range = s.coffeeTempMax - s.coffeeTempMin;
-  bezel(cx,cy,r,FACE());
-  ticks(cx,cy,r, (int)(range*2),(int)(range/2), 135,270, INK_40,FG());
-  g_can.fillRect(cx-1, cy-r+2, 3, 8, LM_RED);          // 12-o'clock red index
-
-  if (on && temp>0){
-    // hand first (behind text), short — points at the rim only
-    float frac=constrain((temp-s.coffeeTempMin)/range,0.f,1.f);
-    float a=(135+270*frac)*DEG_TO_RAD;
-    g_can.drawWedgeLine(cx+cosf(a)*(r-22),cy+sinf(a)*(r-22),
-                        cx+cosf(a)*(r-6), cy+sinf(a)*(r-6), 1.5f,0.5f, LM_RED);
-    // big numeral
-    char tbuf[8]; snprintf(tbuf,sizeof tbuf,"%.0f",temp);
-    g_can.setFont(&F_NUM_LG); g_can.setTextColor(FG());
-    g_can.setTextDatum(middle_center);
-    int tw=g_can.textWidth(tbuf);
-    g_can.drawString(tbuf, cx, cy-2);
-    ring(cx+tw/2+6, cy-16, 3,2, INK_40, FACE());      // degree ring
-    // status word
-    tracked(cx, cy+30, boilerWord(cstat), 3, FG(),
-            &F_LABEL, middle_center);
-  } else {
-    tracked(cx,cy-2,
-            s.machine==lmcloud::MachineStatus::StandBy?"STANDBY":"OFFLINE",
-            4,INK_40,&F_LABEL,middle_center);
-    g_can.drawSpot(cx,cy+28,3,INK_40);
+  switch(g_homePage){
+    case 1:  homeTally(s);            break;
+    case 2:  homeClock(s);            break;
+    default: homeDial(s,on,temp,cstat);
   }
 
-  // ── infoline under the dial ── two halves around a brass dot.
-  // Right half doubles as a clean-due nudge when last backflush > 7d.
-  int     cleanDays = s.lastCleanMs ? (int)((epochMs()-s.lastCleanMs)/86400000) : -1;
-  bool    cleanDue  = cleanDays > 7;
+  // page dots — sit between dial bezel (bottom 178) and infoline (192)
+  for(int i=0;i<HOME_PAGES;++i)
+    g_can.drawSpot(W/2-(HOME_PAGES-1)*6+i*12, 183, 2,
+                   i==g_homePage?BRASS:INK_40);
+
+  // ── infoline ──
+  int  cleanDays = s.lastCleanMs ? (int)((epochMs()-s.lastCleanMs)/86400000) : -1;
+  bool cleanDue  = cleanDays > 7;
   if (s.lastShotSec>0){
     char l[20],rb[16];
     snprintf(l,sizeof l,"LAST  %.1fs",s.lastShotSec);
@@ -283,7 +320,6 @@ static void renderHome(const lmcloud::State& s){
     tracked(W/2,KEY_Y-10,s.serial.c_str(),2,INK_40,&F_LABEL_SM,middle_center);
   }
 
-  // ── piano keys ──
   keys({
     { on?"STANDBY":"WAKE", [on]{ lmcloud::setPower(!on); } },
     { "MACHINE", []{ g_scr=Screen::Controls; g_ctrlScroll=0; g_dirty=true; } },
@@ -531,22 +567,36 @@ static void settingRow(int y,const char* k,const String& v,bool mask,std::functi
 static void renderSettings(){
   auto& s=lmcloud::state();
   g_can.fillScreen(BG()); vignette(); g_btns.clear();
-  header(s);
-  tracked(W/2,36,"SETUP",4,FG(),&F_LABEL,top_center);
 
-  int y=54;
-  settingRow(y,"network", settings.wifiSsid,false,[]{ if(keyboardPrompt(M5.Display,"WiFi SSID",settings.wifiSsid)) settings.save(); g_dirty=true; }); y+=32;
-  settingRow(y,"wifi key",settings.wifiPass,true, []{ if(keyboardPrompt(M5.Display,"WiFi password",settings.wifiPass,true)) settings.save(); g_dirty=true; }); y+=32;
-  settingRow(y,"account", settings.lmUser,  false,[]{ if(keyboardPrompt(M5.Display,"La Marzocco e-mail",settings.lmUser)) settings.save(); g_dirty=true; }); y+=32;
-  settingRow(y,"password",settings.lmPass,  true, []{ if(keyboardPrompt(M5.Display,"La Marzocco password",settings.lmPass,true)) settings.save(); g_dirty=true; }); y+=32;
-  // dark mode toggle (reuses toggleRow visual, but acts on local settings)
+  const int top=54, viewH=KEY_Y-top;
+  int y = top - g_ctrlScroll;
+  g_can.setClipRect(0,top,W,viewH);
+
+  settingRow(y,"network", settings.wifiSsid,false,[]{ if(keyboardPrompt(M5.Display,"WiFi SSID",settings.wifiSsid)) settings.save(); g_dirty=true; }); y+=36;
+  settingRow(y,"wifi key",settings.wifiPass,true, []{ if(keyboardPrompt(M5.Display,"WiFi password",settings.wifiPass,true)) settings.save(); g_dirty=true; }); y+=36;
+  settingRow(y,"account", settings.lmUser,  false,[]{ if(keyboardPrompt(M5.Display,"La Marzocco e-mail",settings.lmUser)) settings.save(); g_dirty=true; }); y+=36;
+  settingRow(y,"password",settings.lmPass,  true, []{ if(keyboardPrompt(M5.Display,"La Marzocco password",settings.lmPass,true)) settings.save(); g_dirty=true; }); y+=36;
   toggleRow(y,"DARK MODE",settings.darkMode,[]{
     settings.darkMode=!settings.darkMode; settings.save();
     g_dark=settings.darkMode; g_dirty=true;
-  });
+  }); y+=40;
 
+  g_can.clearClipRect();
+  int contentH = y - (top - g_ctrlScroll);
+  g_ctrlMax = max(0, contentH - viewH);
+  for(auto& b:g_btns){ int y0=max(b.y,top),y1=min(b.y+b.h,KEY_Y); b.y=y0; b.h=y1-y0; }
+  g_btns.erase(std::remove_if(g_btns.begin(),g_btns.end(),
+    [](const Btn&b){return b.h<=0;}),g_btns.end());
+  g_can.fillRect(0,0,W,top,BG()); g_can.fillRect(0,KEY_Y,W,KEY_H,BG());
+  header(s);
+  tracked(W/2,36,"SETUP",4,FG(),&F_LABEL,top_center);
+  if (g_ctrlMax>0){
+    int thH=max(12,viewH*viewH/contentH);
+    int thY=top+(viewH-thH)*g_ctrlScroll/g_ctrlMax;
+    g_can.fillSmoothRoundRect(W-6,thY,3,thH,1,BRASS);
+  }
   keys({
-    { "BACK",    []{ g_scr=Screen::Home; g_dirty=true; } },
+    { "BACK",    []{ g_scr=Screen::Home; g_ctrlScroll=0; g_dirty=true; } },
     { "RECONNECT",[]{ lmcloud::reconnect(); g_scr=Screen::Home; g_dirty=true; } },
   });
 }
@@ -623,18 +673,22 @@ void screenshot(){
 
 void debugScreen(int n,float arg){
   g_dbgBrewSec = (n==1)?arg:-1;
-  g_dbgOn      = (n==4);
-  g_scr = (n==4)?Screen::Home : (n==5)?Screen::Stats : (Screen)n;
+  g_dbgOn      = (n==4||n==6||n==7);
+  g_homePage   = (n==6)?1:(n==7)?2:0;
+  g_scr = (n==4||n==6||n==7)?Screen::Home : (n==5)?Screen::Stats : (Screen)n;
   render();
 }
 
 void tick(){
   M5.update();
   auto t=M5.Touch.getDetail();
-  bool scrollable = (g_scr==Screen::Controls || g_scr==Screen::Stats);
+  bool scrollable = (g_scr==Screen::Controls || g_scr==Screen::Stats ||
+                     g_scr==Screen::Settings);
+  bool swipeable  = (g_scr==Screen::Home);
 
   if (t.wasPressed()){
-    g_dragging=false; g_dragStartY=t.y; g_dragStartScroll=g_ctrlScroll;
+    g_dragging=false; g_dragStartX=t.x; g_dragStartY=t.y;
+    g_dragStartScroll=g_ctrlScroll;
   }
   if (t.isPressed() && scrollable){
     int dy=t.y-g_dragStartY;
@@ -642,6 +696,14 @@ void tick(){
       g_dragging=true;
       g_ctrlScroll=constrain(g_dragStartScroll-dy,0,g_ctrlMax);
       g_dirty=true;
+    }
+  }
+  if (t.wasReleased() && swipeable){
+    int dx=t.x-g_dragStartX, dy=t.y-g_dragStartY;
+    if (abs(dx)>50 && abs(dx)>2*abs(dy)){
+      g_homePage = (g_homePage + (dx<0?1:HOME_PAGES-1)) % HOME_PAGES;
+      M5.Speaker.tone(2000,14);
+      g_dragging=true; g_dirty=true;      // suppress tap
     }
   }
   if (t.wasReleased() && !g_dragging){
