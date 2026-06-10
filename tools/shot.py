@@ -9,7 +9,10 @@ from PIL import Image
 B64=re.compile(r"^[A-Za-z0-9+/]{4,}=*$")
 
 PORT="/dev/cu.usbserial-5B1F0085301"; W,H=320,240
-SCREENS={"home_on":"4","home_standby":"0","brew":"1","controls":"2","stats":"5","setup":"3"}
+import sys
+SCREENS={"home_on":"l4","home_standby":"l0","brew":"1","controls":"l2","stats":"l5","setup":"l3"}
+if "--dark" in sys.argv:
+    SCREENS={"home_dark":"d4","controls_dark":"d2","stats_dark":"d5","setup_dark":"d3"}
 os.makedirs("shots",exist_ok=True)
 
 p=serial.Serial(PORT,115200,timeout=0.5)

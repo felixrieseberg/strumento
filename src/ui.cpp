@@ -17,11 +17,21 @@
 #include "storage.h"
 #include "keyboard.h"
 #include "fonts.h"
+#include "version.h"
 #include <time.h>
 #include <sys/time.h>
 
 using namespace cfg;
 namespace ui {
+
+// ── theme ── dark mode reuses the brewing palette everywhere ────────────────
+static bool g_dark = false;
+static constexpr uint16_t NIGHT_LO = 0x2104;       // hairlines/separators on dark
+static inline uint16_t BG()    { return g_dark?NIGHT   :IVORY;    }
+static inline uint16_t BG_LO() { return g_dark?NIGHT_LO:IVORY_LO; }
+static inline uint16_t FG()    { return g_dark?LUME    :INK;      }
+static inline uint16_t FACE()  { return g_dark?NIGHT   :PAPER;    }
+void setDark(bool d){ g_dark=d; }
 
 // VLW handles parsed once at boot — switching is then a pointer swap.
 struct AAFont {
@@ -91,15 +101,14 @@ static int tracked(int x, int y, const char* s, int track,
   return total;
 }
 
-// Subtle corner vignette on ivory.
+// Subtle corner vignette.
 static void vignette() {
+  if (g_dark) return;                              // night needs no vignette
   for (int i=0;i<3;++i){
-    int r = 28 - i*10; uint16_t c = (i==0)?IVORY_LO:IVORY;
+    int r=28-i*10;
     g_can.fillRect(0,0,r,r,IVORY_LO); g_can.fillRect(W-r,0,r,r,IVORY_LO);
     g_can.fillRect(0,H-r,r,r,IVORY_LO); g_can.fillRect(W-r,H-r,r,r,IVORY_LO);
-    (void)c;
   }
-  // soften with quarter-circles back to ivory
   g_can.fillCircle(28,28,28,IVORY);   g_can.fillCircle(W-28,28,28,IVORY);
   g_can.fillCircle(28,H-28,28,IVORY); g_can.fillCircle(W-28,H-28,28,IVORY);
 }
@@ -158,7 +167,7 @@ static void hairline(int y, const char* cap=nullptr) {
   g_can.drawFastHLine(12,y,W-24,BRASS);
   if (cap) {
     int w = tracked(W/2, y-6, cap, 3, INK_40, &F_LABEL, top_center);
-    g_can.fillRect(W/2-w/2-8, y-1, w+16, 3, IVORY);   // erase line under caption
+    g_can.fillRect(W/2-w/2-8, y-1, w+16, 3, BG());    // erase line under caption
     tracked(W/2, y-6, cap, 3, INK_40, &F_LABEL, top_center);
   }
 }
@@ -171,7 +180,8 @@ static const char* boilerWord(lmcloud::BoilerStatus b){
 }
 
 // ── header ───────────────────────────────────────────────────────────────────
-static void header(const lmcloud::State& s, bool dark=false) {
+static void header(const lmcloud::State& s, bool forceDark=false) {
+  bool dark = forceDark || g_dark;
   uint16_t bg = dark?NIGHT:IVORY, fg = dark?LUME:INK_40;
   // hairline + wordmark
   g_can.drawFastHLine(12,20,W-24, dark?INK_40:BRASS);
@@ -195,10 +205,9 @@ static void header(const lmcloud::State& s, bool dark=false) {
 }
 
 // ── piano-key bottom bar ─────────────────────────────────────────────────────
-static void keys(std::initializer_list<std::pair<const char*,std::function<void()>>> ks,
-                 bool dark=false) {
+static void keys(std::initializer_list<std::pair<const char*,std::function<void()>>> ks) {
   int n=ks.size(), i=0, kw=W/n;
-  uint16_t line=dark?INK_40:BRASS, fg=dark?LUME:INK;
+  uint16_t line=g_dark?INK_40:BRASS, fg=FG();
   g_can.drawFastHLine(0,KEY_Y,W,line);
   for (auto& k:ks){
     int x=i*kw;
@@ -211,7 +220,7 @@ static void keys(std::initializer_list<std::pair<const char*,std::function<void(
 
 // ── HOME ─────────────────────────────────────────────────────────────────────
 static void renderHome(const lmcloud::State& s){
-  g_can.fillScreen(IVORY); vignette(); g_btns.clear();
+  g_can.fillScreen(BG()); vignette(); g_btns.clear();
   header(s);
 
   bool on = g_dbgOn || s.machine==lmcloud::MachineStatus::PoweredOn ||
@@ -221,8 +230,8 @@ static void renderHome(const lmcloud::State& s){
 
   // ── main dial ──
   const int cx=W/2, cy=108, r=70;
-  bezel(cx,cy,r,PAPER);
-  ticks(cx,cy,r, 40,10, 135,270, INK_40,INK);          // 80–100°C, 270° sweep
+  bezel(cx,cy,r,FACE());
+  ticks(cx,cy,r, 40,10, 135,270, INK_40,FG());         // 80–100°C, 270° sweep
   g_can.fillRect(cx-1, cy-r+2, 3, 8, LM_RED);          // 12-o'clock red index
 
   if (on && temp>0){
@@ -233,13 +242,13 @@ static void renderHome(const lmcloud::State& s){
                         cx+cosf(a)*(r-6), cy+sinf(a)*(r-6), 1.5f,0.5f, LM_RED);
     // big numeral
     char tbuf[8]; snprintf(tbuf,sizeof tbuf,"%.0f",temp);
-    g_can.setFont(&F_NUM_LG); g_can.setTextColor(INK);
+    g_can.setFont(&F_NUM_LG); g_can.setTextColor(FG());
     g_can.setTextDatum(middle_center);
     int tw=g_can.textWidth(tbuf);
     g_can.drawString(tbuf, cx, cy-2);
-    ring(cx+tw/2+6, cy-16, 3,2, INK_40, PAPER);      // degree ring
+    ring(cx+tw/2+6, cy-16, 3,2, INK_40, FACE());      // degree ring
     // status word
-    tracked(cx, cy+30, boilerWord(cstat), 3, INK,
+    tracked(cx, cy+30, boilerWord(cstat), 3, FG(),
             &F_LABEL, middle_center);
   } else {
     tracked(cx,cy-2,
@@ -337,49 +346,49 @@ static void renderBrewing(const lmcloud::State& s){
 
 // ── CONTROLS ─────────────────────────────────────────────────────────────────
 static void toggleRow(int y,const char* label,bool on,std::function<void()> tap){
-  tracked(18,y+18,label,2,INK,&F_LABEL,middle_left);
+  tracked(18,y+18,label,2,FG(),&F_LABEL,middle_left);
   // physical-style toggle
   int tx=W-18-54, ty=y+18;
-  g_can.fillSmoothRoundRect(tx,ty-10,54,20,10, on?LM_RED:IVORY_LO);
+  g_can.fillSmoothRoundRect(tx,ty-10,54,20,10, on?LM_RED:BG_LO());
   smoothArc(tx+10,ty,10,0.5f,90,270,BRASS);
   smoothArc(tx+44,ty,10,0.5f,-90,90,BRASS);
   g_can.drawFastHLine(tx+10,ty-10,34,BRASS);
   g_can.drawFastHLine(tx+10,ty+10,34,BRASS);
-  g_can.fillSmoothCircle(tx+(on?44:10), ty, 8, PAPER);
-  g_can.drawFastHLine(12,y+36,W-24,IVORY_LO);
+  g_can.fillSmoothCircle(tx+(on?44:10), ty, 8, g_dark?LUME:PAPER);
+  g_can.drawFastHLine(12,y+36,W-24,BG_LO());
   g_btns.push_back({0,y,W,36,std::move(tap)});
 }
 
 // stepper row:  label · [-] value [+]
 static void stepRow(int y,const char* label,float v,float step,
                     std::function<void(float)> set,const char* fmt="%.1f"){
-  tracked(18,y+18,label,2,INK,&F_LABEL,middle_left);
+  tracked(18,y+18,label,2,FG(),&F_LABEL,middle_left);
   char tv[10]; snprintf(tv,sizeof tv,fmt,v);
   int vcx=W-86;
-  g_can.setFont(&F_NUM_MD); g_can.setTextColor(INK);
+  g_can.setFont(&F_NUM_MD); g_can.setTextColor(FG());
   g_can.setTextDatum(middle_center); g_can.drawString(tv,vcx,y+18);
   int bx0=vcx-50, bx1=vcx+50;
   for(int bx:{bx0,bx1}){
-    ring(bx,y+18,14,12,BRASS,IVORY);
-    g_can.drawWideLine(bx-5,y+18,bx+5,y+18,1.0f,INK);
-    if(bx==bx1) g_can.drawWideLine(bx,y+13,bx,y+23,1.0f,INK);
+    ring(bx,y+18,14,12,BRASS,BG());
+    g_can.drawWideLine(bx-5,y+18,bx+5,y+18,1.0f,FG());
+    if(bx==bx1) g_can.drawWideLine(bx,y+13,bx,y+23,1.0f,FG());
   }
   g_btns.push_back({bx0-16,y+2,32,32,[=]{ set(v-step); }});
   g_btns.push_back({bx1-16,y+2,32,32,[=]{ set(v+step); }});
-  g_can.drawFastHLine(12,y+36,W-24,IVORY_LO);
+  g_can.drawFastHLine(12,y+36,W-24,BG_LO());
 }
 
 // cycler row: tap value to advance through options
 static void cycleRow(int y,const char* label,const char* val,std::function<void()> tap){
-  tracked(18,y+18,label,2,INK,&F_LABEL,middle_left);
-  int vw = tracked(W-18,y+18,val,2,INK,&F_LABEL,middle_right);
+  tracked(18,y+18,label,2,FG(),&F_LABEL,middle_left);
+  int vw = tracked(W-18,y+18,val,2,FG(),&F_LABEL,middle_right);
   g_can.drawFastHLine(W-18-vw,y+28,vw,BRASS);          // underline = tappable
-  g_can.drawFastHLine(12,y+36,W-24,IVORY_LO);
+  g_can.drawFastHLine(12,y+36,W-24,BG_LO());
   g_btns.push_back({0,y,W,36,std::move(tap)});
 }
 
 static void renderControls(const lmcloud::State& s){
-  g_can.fillScreen(IVORY); vignette(); g_btns.clear();
+  g_can.fillScreen(BG()); vignette(); g_btns.clear();
 
   bool steamOn=s.steamEnabled, preOn=s.preBrewOn;
   bool sbEn=s.sbEnabled, sbAfter=s.sbAfterBrew; int sbMin=s.sbMinutes;
@@ -396,7 +405,7 @@ static void renderControls(const lmcloud::State& s){
   // backflush — guarded
   tracked(18,y+18,"BACKFLUSH",2,LM_RED,&F_LABEL,middle_left);
   g_can.fillSmoothRoundRect(W-18-90,y+6,90,24,12,LM_RED);
-  g_can.fillSmoothRoundRect(W-18-89,y+7,88,22,11,IVORY);
+  g_can.fillSmoothRoundRect(W-18-89,y+7,88,22,11,BG());
   tracked(W-18-45,y+18,"START",2,LM_RED,&F_LABEL,middle_center);
   g_btns.push_back({W-18-90,y+6,90,24,[]{ lmcloud::startBackflush(); }});       y+=40;
   // smart standby
@@ -417,9 +426,9 @@ static void renderControls(const lmcloud::State& s){
   g_btns.erase(std::remove_if(g_btns.begin(),g_btns.end(),
     [](const Btn&b){ return b.h<=0; }), g_btns.end());
   // chrome on top of scrolled content
-  g_can.fillRect(0,0,W,top,IVORY); g_can.fillRect(0,KEY_Y,W,KEY_H,IVORY);
+  g_can.fillRect(0,0,W,top,BG()); g_can.fillRect(0,KEY_Y,W,KEY_H,BG());
   header(s);
-  tracked(W/2,36,"MACHINE",4,INK,&F_LABEL,top_center);
+  tracked(W/2,36,"MACHINE",4,FG(),&F_LABEL,top_center);
   if (g_ctrlMax>0){
     int thH = max(12, viewH*viewH/contentH);
     int thY = top + (viewH-thH) * g_ctrlScroll / g_ctrlMax;
@@ -429,11 +438,12 @@ static void renderControls(const lmcloud::State& s){
 }
 
 // ── STATS — read-only scrollable list ────────────────────────────────────────
-static void statRow(int y,const char* k,const String& v,uint16_t vc=INK){
+static void statRow(int y,const char* k,const String& v,uint16_t vc=0){
+  if(!vc) vc=FG();
   g_can.setFont(&F_SERIF_SM); g_can.setTextColor(INK_40);
   g_can.setTextDatum(middle_left); g_can.drawString(k,18,y+16);
   tracked(W-18,y+16,v.c_str(),1,vc,&F_LABEL_SM,middle_right);
-  g_can.drawFastHLine(12,y+32,W-24,IVORY_LO);
+  g_can.drawFastHLine(12,y+32,W-24,BG_LO());
 }
 static String dayStr(uint8_t m){
   static const char* D[]={"Mo","Tu","We","Th","Fr","Sa","Su"};
@@ -442,16 +452,17 @@ static String dayStr(uint8_t m){
 }
 
 static void renderStats(const lmcloud::State& s){
-  g_can.fillScreen(IVORY); vignette(); g_btns.clear();
+  g_can.fillScreen(BG()); vignette(); g_btns.clear();
 
   const int top=54, viewH=KEY_Y-top;
   int y = top - g_ctrlScroll;
   g_can.setClipRect(0,top,W,viewH);
 
+  statRow(y,"strumento",     STRUMENTO_VERSION, INK_40);                      y+=36;
   statRow(y,"total coffees", String(s.totalCoffee));                          y+=36;
   statRow(y,"total flushes", String(s.totalFlush));                           y+=36;
   statRow(y,"last clean",    s.lastCleanMs?ago(s.lastCleanMs)+" AGO":"—",
-          (s.lastCleanMs && (epochMs()-s.lastCleanMs)>7LL*86400000)?LM_RED:INK); y+=36;
+          (s.lastCleanMs && (epochMs()-s.lastCleanMs)>7LL*86400000)?LM_RED:0);   y+=36;
   statRow(y,"water",         s.plumbedIn?"PLUMBED":"TANK");                   y+=36;
   statRow(y,"wifi",          String(s.wifiRssi)+" dBm");                      y+=36;
   for (auto& f : s.firmwares){
@@ -462,16 +473,16 @@ static void renderStats(const lmcloud::State& s){
   for (auto& w : s.schedules){
     String k = "wake  "+dayStr(w.dayMask);
     String v = hhmm(w.onMin)+"-"+hhmm(w.offMin);
-    statRow(y, k.c_str(), v, w.enabled?INK:INK_40);                           y+=36;
+    statRow(y, k.c_str(), v, w.enabled?0:INK_40);                             y+=36;
   }
 
   g_can.clearClipRect();
   int contentH = y - (top - g_ctrlScroll);
   g_ctrlMax = max(0, contentH - viewH);
   // chrome
-  g_can.fillRect(0,0,W,top,IVORY); g_can.fillRect(0,KEY_Y,W,KEY_H,IVORY);
+  g_can.fillRect(0,0,W,top,BG()); g_can.fillRect(0,KEY_Y,W,KEY_H,BG());
   header(s);
-  tracked(W/2,36,"STATS",4,INK,&F_LABEL,top_center);
+  tracked(W/2,36,"STATS",4,FG(),&F_LABEL,top_center);
   if (g_ctrlMax>0){
     int thH = max(12, viewH*viewH/contentH);
     int thY = top + (viewH-thH) * g_ctrlScroll / g_ctrlMax;
@@ -488,24 +499,29 @@ static void settingRow(int y,const char* k,const String& v,bool mask,std::functi
   g_can.setFont(&F_SERIF_SM); g_can.setTextColor(INK_40);
   g_can.setTextDatum(middle_left); g_can.drawString(k,18,y+16);
   String s; if(mask) for(int i=0;i<8;++i) s+='*'; else s=v;
-  if(s.length()>18) s=s.substring(0,17)+"..";
-  g_can.setFont(&F_LABEL_SM); g_can.setTextColor(INK);
-  g_can.setTextDatum(middle_right); g_can.drawString(s,W-18,y+16);
-  g_can.drawFastHLine(12,y+32,W-24,IVORY_LO);
+  if(s.length()>24) s=s.substring(0,23)+"..";
+  g_can.setFont(&F_LABEL_SM); g_can.setTextColor(FG());
+  g_can.setTextDatum(middle_left); g_can.drawString(s,100,y+16);
+  g_can.drawFastHLine(12,y+32,W-24,BG_LO());
   g_btns.push_back({0,y,W,32,std::move(tap)});
 }
 
 static void renderSettings(){
   auto& s=lmcloud::state();
-  g_can.fillScreen(IVORY); vignette(); g_btns.clear();
+  g_can.fillScreen(BG()); vignette(); g_btns.clear();
   header(s);
-  tracked(W/2,36,"SETUP",4,INK,&F_LABEL,top_center);
+  tracked(W/2,36,"SETUP",4,FG(),&F_LABEL,top_center);
 
   int y=54;
-  settingRow(y,"network", settings.wifiSsid,false,[]{ if(keyboardPrompt(M5.Display,"WiFi SSID",settings.wifiSsid)) settings.save(); g_dirty=true; }); y+=36;
-  settingRow(y,"wifi key",settings.wifiPass,true, []{ if(keyboardPrompt(M5.Display,"WiFi password",settings.wifiPass,true)) settings.save(); g_dirty=true; }); y+=36;
-  settingRow(y,"account", settings.lmUser,  false,[]{ if(keyboardPrompt(M5.Display,"La Marzocco e-mail",settings.lmUser)) settings.save(); g_dirty=true; }); y+=36;
-  settingRow(y,"password",settings.lmPass,  true, []{ if(keyboardPrompt(M5.Display,"La Marzocco password",settings.lmPass,true)) settings.save(); g_dirty=true; });
+  settingRow(y,"network", settings.wifiSsid,false,[]{ if(keyboardPrompt(M5.Display,"WiFi SSID",settings.wifiSsid)) settings.save(); g_dirty=true; }); y+=32;
+  settingRow(y,"wifi key",settings.wifiPass,true, []{ if(keyboardPrompt(M5.Display,"WiFi password",settings.wifiPass,true)) settings.save(); g_dirty=true; }); y+=32;
+  settingRow(y,"account", settings.lmUser,  false,[]{ if(keyboardPrompt(M5.Display,"La Marzocco e-mail",settings.lmUser)) settings.save(); g_dirty=true; }); y+=32;
+  settingRow(y,"password",settings.lmPass,  true, []{ if(keyboardPrompt(M5.Display,"La Marzocco password",settings.lmPass,true)) settings.save(); g_dirty=true; }); y+=32;
+  // dark mode toggle (reuses toggleRow visual, but acts on local settings)
+  toggleRow(y,"DARK MODE",settings.darkMode,[]{
+    settings.darkMode=!settings.darkMode; settings.save();
+    g_dark=settings.darkMode; g_dirty=true;
+  });
 
   keys({
     { "BACK",    []{ g_scr=Screen::Home; g_dirty=true; } },
@@ -545,18 +561,19 @@ void begin(){
   AA_LABEL_SM.load(vlw_label_sm, sizeof vlw_label_sm);
   AA_NUM_LG  .load(vlw_num_lg,   sizeof vlw_num_lg);
   AA_NUM_MD  .load(vlw_num_md,   sizeof vlw_num_md);
+  g_dark = settings.darkMode;
   lmcloud::onChange([]{ g_dirty=true; });
 }
 
 void forceSetup(){ g_scr=Screen::Settings; g_dirty=true; }
 
 void splash(const char* line){
-  g_can.fillScreen(IVORY);
+  g_can.fillScreen(BG());
   g_can.setTextDatum(middle_center);
-  g_can.setFont(&F_WORDMARK); g_can.setTextColor(INK);
+  g_can.setFont(&F_WORDMARK); g_can.setTextColor(FG());
   g_can.drawString("linea mini", W/2, H/2-18);
   g_can.drawFastHLine(W/2-56,H/2+6,112,BRASS);
-  tracked(W/2,H/2+22,"STRUMENTO",6,INK_40,&F_LABEL_SM,middle_center);
+  tracked(W/2,H/2+22,STRUMENTO_VERSION,3,INK_40,&F_LABEL_SM,middle_center);
   g_can.setFont(&F_LABEL_SM); g_can.setTextColor(INK_40);
   g_can.setTextDatum(middle_center);
   g_can.drawString(line, W/2, H-22);

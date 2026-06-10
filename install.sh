@@ -30,6 +30,7 @@ if [[ "${ans:-}" =~ ^[Yy]$ ]]; then
   read -rs -p "  La Marzocco password : " LM_PASS; echo
   read -r  -p "  Machine serial (optional): " LM_SERIAL
   esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+  install -m 0600 /dev/null "$SECRETS"
   cat > "$SECRETS" <<EOF
 #pragma once
 #define SECRET_WIFI_SSID   "$(esc "$WIFI_SSID")"

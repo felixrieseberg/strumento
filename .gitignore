@@ -9,3 +9,4 @@ shots/*.png
 shots/*.html
 .cache/
 __pycache__/
+src/version.h
