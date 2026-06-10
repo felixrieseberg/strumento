@@ -3,69 +3,120 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Strumento — La Marzocco companion</title>
+<title>Strumento — the missing display for La Marzocco espresso machines</title>
 <style>
   :root {
-    --ivory: #F4EFE3; --ink: #1C1A17; --ink-40: #8A8578;
-    --brass: #B08D57; --lm-red: #C8102E; --paper: #FAF7EF;
+    --ivory:#F4EFE3; --paper:#FAF7EF; --ink:#1C1A17; --ink-40:#8A8578;
+    --brass:#B08D57; --brass-hi:#CDA56F; --lm-red:#C8102E;
+    --night:#0E0E0C; --lume:#E8E4D0;
+    --serif: Cochin, "Hoefler Text", Georgia, "Times New Roman", serif;
+    --geo:   Futura, "Avenir Next", "Century Gothic", "Gill Sans", sans-serif;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--ivory); color: var(--ink);
-    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  html, body { margin:0; }
+  body { background:var(--ivory); color:var(--ink); font:16px/1.65 var(--geo); }
+
+  /* ── hero — mirrors the brewing screen ───────────────────────────────── */
+  .hero {
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 0%, #1a1916 0%, var(--night) 60%),
+      var(--night);
+    color:var(--lume); padding:72px 24px 56px; text-align:center;
+    border-bottom:1px solid var(--brass);
   }
-  main { max-width: 640px; margin: 0 auto; padding: 56px 24px 80px; }
-  h1 {
-    font: italic 400 52px/1 Georgia, "Times New Roman", serif;
-    letter-spacing: 0.02em; margin: 0 0 4px;
+  .hero h1 {
+    font:italic 400 60px/1 var(--serif); margin:0; letter-spacing:.01em;
   }
-  h1 .accent { color: var(--lm-red); }
-  .sub { color: var(--ink-40); margin: 0 0 40px; font-size: 15px; }
+  .hero h1 .accent { color:var(--lm-red); font-style:normal; }
+  .rule {
+    width:160px; height:1px; margin:18px auto;
+    background:linear-gradient(90deg, transparent, var(--brass), transparent);
+  }
+  .hero .tag {
+    font:500 12px/1.7 var(--geo); letter-spacing:.32em; text-transform:uppercase;
+    color:var(--ink-40); max-width:520px; margin:0 auto 12px;
+  }
+  .hero .lede {
+    font:400 16px/1.7 var(--geo); color:var(--lume);
+    max-width:560px; margin:0 auto 36px; opacity:.9;
+  }
+  .hero video {
+    display:block; width:100%; max-width:760px; margin:0 auto 18px;
+    border-radius:10px; box-shadow:0 0 0 1px var(--brass), 0 24px 60px -20px #000;
+    background:#000;
+  }
+  .strip {
+    display:grid; grid-template-columns:repeat(3,1fr); gap:12px;
+    max-width:760px; margin:0 auto;
+  }
+  .strip img {
+    width:100%; border-radius:6px; box-shadow:0 0 0 1px var(--brass);
+    transition:transform .25s ease;
+  }
+  .strip img:hover { transform:translateY(-3px); }
+
+  /* ── body ────────────────────────────────────────────────────────────── */
+  main { max-width:640px; margin:0 auto; padding:56px 24px 80px; }
   h2 {
-    font: 600 12px/1 -apple-system, sans-serif; text-transform: uppercase;
-    letter-spacing: 0.14em; color: var(--ink-40);
-    border-top: 1px solid var(--brass); padding-top: 20px; margin: 40px 0 14px;
+    font:500 12px/1 var(--geo); letter-spacing:.28em; text-transform:uppercase;
+    color:var(--ink-40); margin:48px 0 18px; display:flex; align-items:center; gap:18px;
   }
-  ul { margin: 0 0 8px; padding-left: 20px; }
-  li { margin: 6px 0; }
-  li b { font-weight: 600; }
+  h2::before, h2::after { content:""; flex:1; height:1px; background:var(--brass); }
+  ul, ol { margin:0; padding-left:22px; }
+  li { margin:10px 0; }
+  li b { font-weight:500; }
+  code {
+    font:13px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background:var(--paper); border:1px solid var(--brass);
+    padding:1px 6px; border-radius:3px;
+  }
+  a { color:var(--lm-red); text-decoration-thickness:1px; }
+
   .flash {
-    background: var(--paper); border: 1px solid var(--brass); border-radius: 6px;
-    padding: 28px 24px; margin: 12px 0 8px; text-align: center;
+    background:var(--paper); border:1px solid var(--brass); border-radius:10px;
+    padding:30px 24px; text-align:center; margin-top:-10px;
+    box-shadow:0 1px 0 #fff inset, 0 12px 28px -18px var(--ink-40);
   }
   esp-web-install-button {
     --esp-tools-button-color: var(--lm-red);
     --esp-tools-button-text-color: #fff;
-    --esp-tools-button-border-radius: 4px;
+    --esp-tools-button-border-radius: 6px;
   }
-  .flash p { margin: 14px 0 0; font-size: 13px; color: var(--ink-40); }
-  ol { margin: 0; padding-left: 22px; }
-  ol li { margin: 10px 0; }
-  code {
-    font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
-    background: var(--paper); border: 1px solid var(--brass);
-    padding: 1px 5px; border-radius: 3px;
+  .flash p { margin:16px 0 0; font-size:14px; color:var(--ink-40); }
+
+  .machines {
+    display:flex; flex-wrap:wrap; gap:10px; justify-content:center;
+    list-style:none; padding:0;
   }
-  a { color: var(--lm-red); }
+  .machines li {
+    font:500 11px/1 var(--geo); letter-spacing:.14em; text-transform:uppercase;
+    padding:8px 14px; border:1px solid var(--brass); border-radius:999px;
+    background:var(--paper); margin:0;
+  }
+  .machines li.tested { border-color:var(--lm-red); color:var(--lm-red); }
+
   footer {
-    margin-top: 56px; border-top: 1px solid var(--brass); padding-top: 16px;
-    font-size: 13px; color: var(--ink-40);
+    margin-top:64px; border-top:1px solid var(--brass); padding-top:18px;
+    font-size:13px; color:var(--ink-40); text-align:center;
   }
-.hero{display:block;width:100%;max-width:720px;margin:28px auto 12px;
-  border-radius:8px;border:1px solid var(--brass);background:#000}
-.strip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
-  max-width:720px;margin:0 auto 36px}
-.strip img{width:100%;border-radius:6px;border:1px solid var(--brass)}
+  @media (max-width:560px){
+    .hero{padding-top:48px} .hero h1{font-size:44px}
+    .strip{grid-template-columns:1fr; gap:10px}
+  }
 </style>
 <script type="module" src="https://unpkg.com/esp-web-tools@10.2.1/dist/web/install-button.js" integrity="sha384-DLSRQX8nILUsYRCKoOL+FvGRis5HoNA+9ak4QYqreENR9UVDIXUSoZrdt1Ibty96" crossorigin="anonymous"></script>
 </head>
 <body>
-<main>
-  <h1>Strumento<span class="accent">.</span></h1>
-  <p class="sub">The missing display for La&nbsp;Marzocco espresso machines.
-    Runs on an M5Stack&nbsp;Core2. No Home&nbsp;Assistant, no proxy.</p>
 
-  <video class="hero" autoplay muted loop playsinline poster="img/ready.jpg">
+<header class="hero">
+  <h1>Strumento<span class="accent">.</span></h1>
+  <div class="rule"></div>
+  <p class="tag">The display I always wanted for<br>La&nbsp;Marzocco espresso machines</p>
+  <p class="lede">An analog boiler-temp dial, a shot timer that takes over the
+    moment you pull the paddle, and easy-to-reach controls for power, steam,
+    pre-brew and backflush. Runs on a $50 M5Stack&nbsp;Core2.</p>
+
+  <video autoplay muted loop playsinline poster="img/ready.jpg">
     <source src="img/demo.webm" type="video/webm">
     <source src="img/demo.mp4"  type="video/mp4">
   </video>
@@ -74,40 +125,59 @@
     <img src="img/timer.jpg" alt="Shot timer mid-extraction">
     <img src="img/settings.jpg" alt="Machine settings screen">
   </div>
+</header>
 
-  <h2>You'll need</h2>
-  <ul>
-    <li><b>M5Stack Core2</b> (or Core2 v1.1) — ESP32, 320×240 touch</li>
-    <li><b>USB-C cable</b> that carries data, plugged into this computer</li>
-    <li>A <b>La Marzocco app account</b> with your machine paired</li>
-    <li><b>Chrome</b> or <b>Edge</b> on desktop — Safari &amp; Firefox don't do Web&nbsp;Serial</li>
-  </ul>
-
-  <h2>Flash</h2>
+<main>
+  <h2>Install</h2>
   <div class="flash">
     <esp-web-install-button manifest="./manifest.json">
       <span slot="unsupported">Your browser can't talk to serial ports.
         Open this page in Chrome or Edge on a desktop.</span>
       <span slot="not-allowed">Web Serial needs HTTPS — open the hosted page, not a local file.</span>
     </esp-web-install-button>
-    <p>Click <b>Connect</b>, pick the <code>USB&nbsp;Single&nbsp;Serial</code> /
-      <code>CP2104</code> port, then <b>Install&nbsp;Strumento</b>. Takes about 90&nbsp;seconds.</p>
+    <p>Plug your Core2 in over USB-C, click <b>Connect</b>, pick the
+      <code>USB&nbsp;Single&nbsp;Serial</code> / <code>CP2104</code> port, then
+      <b>Install&nbsp;Strumento</b>. Takes about 90&nbsp;seconds.</p>
   </div>
+
+  <h2>You'll need</h2>
+  <ul>
+    <li>An <b><a href="https://shop.m5stack.com/products/m5stack-core2-esp32-iot-development-kit">M5Stack Core2</a></b>
+        — about $50. The v1.1 works too.</li>
+    <li>The <b>La&nbsp;Marzocco app account</b> you already have, with your machine paired.</li>
+    <li><b>Chrome</b> or <b>Edge</b> on desktop — Safari and Firefox don't do Web&nbsp;Serial.</li>
+  </ul>
 
   <h2>First boot</h2>
   <ol>
-    <li>The device starts on the Home gauge with no connection.</li>
-    <li>Tap <b>SETUP</b> (right-hand piano key).</li>
-    <li>Enter your <b>WiFi</b> name &amp; password, then your <b>La&nbsp;Marzocco</b>
-        email &amp; password. Serial number is optional — it's auto-discovered if you
-        only have one machine.</li>
-    <li>Tap <b>Reconnect</b>. The boiler needle swings live within a few seconds.</li>
+    <li>The device lands on the Setup screen.</li>
+    <li>Tap each row and type your <b>WiFi</b> name &amp; password, then your
+        <b>La&nbsp;Marzocco</b> email &amp; password. Leave the serial blank to
+        auto-discover.</li>
+    <li>Tap <b>Reconnect</b>. The boiler dial goes live within a few seconds; pull
+        the paddle and it flips to the shot timer.</li>
   </ol>
+  <p style="font-size:14px;color:var(--ink-40);margin-top:14px">
+    Credentials stay on the device and are only used to log into your WiFi and
+    La&nbsp;Marzocco's cloud.</p>
+
+  <h2>Supported machines</h2>
+  <ul class="machines">
+    <li class="tested">Linea Mini</li>
+    <li>Linea Mini R</li>
+    <li>Linea Micra</li>
+    <li>GS3 AV</li>
+    <li>GS3 MP</li>
+  </ul>
+  <p style="font-size:14px;color:var(--ink-40);text-align:center;margin-top:16px">
+    The UI checks the machine's capability flags and hides anything that doesn't apply,
+    so whatever the official app can drive should work here too.</p>
 
   <footer>
-    Not affiliated with La&nbsp;Marzocco&nbsp;S.r.l. ·
-    <a href="https://github.com/felixrieseberg/strumento">Source &amp; build-from-scratch instructions</a>
+    MIT &middot; not affiliated with La&nbsp;Marzocco&nbsp;S.r.l. &middot;
+    <a href="https://github.com/felixrieseberg/strumento">Source on GitHub</a>
   </footer>
 </main>
+
 </body>
 </html>
