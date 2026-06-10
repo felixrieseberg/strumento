@@ -1,6 +1,6 @@
 # Strumento
 
-**A bench-top gauge & shot timer for the La Marzocco Linea Mini.**
+**The missing display for La Marzocco espresso machines.**
 Runs standalone on an [M5Stack Core2](https://shop.m5stack.com/products/m5stack-core2-esp32-iot-development-kit).
 Live coffee-boiler temperature on an analog dial, an instant full-screen shot
 timer the moment you pull the paddle, and one-tap power / steam / pre-brew /
