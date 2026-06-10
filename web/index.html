@@ -51,6 +51,11 @@
     margin-top: 56px; border-top: 1px solid var(--brass); padding-top: 16px;
     font-size: 13px; color: var(--ink-40);
   }
+.hero{display:block;width:100%;max-width:720px;margin:28px auto 12px;
+  border-radius:8px;border:1px solid var(--brass);background:#000}
+.strip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
+  max-width:720px;margin:0 auto 36px}
+.strip img{width:100%;border-radius:6px;border:1px solid var(--brass)}
 </style>
 <script type="module" src="https://unpkg.com/esp-web-tools@10.2.1/dist/web/install-button.js" integrity="sha384-DLSRQX8nILUsYRCKoOL+FvGRis5HoNA+9ak4QYqreENR9UVDIXUSoZrdt1Ibty96" crossorigin="anonymous"></script>
 </head>
@@ -59,6 +64,16 @@
   <h1>Strumento<span class="accent">.</span></h1>
   <p class="sub">The missing display for La&nbsp;Marzocco espresso machines.
     Runs on an M5Stack&nbsp;Core2. No Home&nbsp;Assistant, no proxy.</p>
+
+  <video class="hero" autoplay muted loop playsinline poster="img/ready.jpg">
+    <source src="img/demo.webm" type="video/webm">
+    <source src="img/demo.mp4"  type="video/mp4">
+  </video>
+  <div class="strip">
+    <img src="img/ready.jpg" alt="Home dial showing 93° READY">
+    <img src="img/timer.jpg" alt="Shot timer mid-extraction">
+    <img src="img/settings.jpg" alt="Machine settings screen">
+  </div>
 
   <h2>You'll need</h2>
   <ul>
