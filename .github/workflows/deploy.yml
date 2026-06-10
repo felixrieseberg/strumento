@@ -1,17 +1,29 @@
-name: build
+name: deploy
 
 on:
   push:
     branches: [main]
-  release:
-    types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
 jobs:
-  firmware:
+  build-and-publish:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # version.py needs commit date
 
       - uses: actions/setup-python@v5
         with:
@@ -27,25 +39,24 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio esptool
 
-      - name: Build
+      - name: Build firmware
         run: pio run
 
-      - name: Merge flash image
+      - name: Merge flash image into web/
         run: |
           python -m esptool --chip esp32 merge_bin \
-            -o strumento-m5core2.bin \
+            -o web/strumento-m5core2.bin \
             --flash_mode dio --flash_size 16MB \
             0x1000  .pio/build/m5core2/bootloader.bin \
             0x8000  .pio/build/m5core2/partitions.bin \
             0x10000 .pio/build/m5core2/firmware.bin
+          ls -lh web/strumento-m5core2.bin
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/configure-pages@v5
         with:
-          name: strumento-m5core2
-          path: strumento-m5core2.bin
-
-      - name: Attach to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
         with:
-          files: strumento-m5core2.bin
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4
