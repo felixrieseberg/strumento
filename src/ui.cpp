@@ -376,14 +376,11 @@ static void renderBrewing(const lmcloud::State& s){
 // ── CONTROLS ─────────────────────────────────────────────────────────────────
 static void toggleRow(int y,const char* label,bool on,std::function<void()> tap){
   tracked(18,y+18,label,2,FG(),&F_LABEL,middle_left);
-  // physical-style toggle
+  // physical-style toggle — nested smooth round-rects for a clean AA ring
   int tx=W-18-54, ty=y+18;
-  g_can.fillSmoothRoundRect(tx,ty-10,54,20,10, on?LM_RED:BG_LO());
-  smoothArc(tx+10,ty,10,0.5f,90,270,BRASS);
-  smoothArc(tx+44,ty,10,0.5f,-90,90,BRASS);
-  g_can.drawFastHLine(tx+10,ty-10,34,BRASS);
-  g_can.drawFastHLine(tx+10,ty+10,34,BRASS);
-  g_can.fillSmoothCircle(tx+(on?44:10), ty, 8, g_dark?LUME:PAPER);
+  g_can.fillSmoothRoundRect(tx-1,ty-11,56,22,11, BRASS);
+  g_can.fillSmoothRoundRect(tx+1,ty-9, 52,18, 9, on?LM_RED:BG_LO());
+  g_can.fillSmoothCircle   (tx+(on?44:10), ty, 7, g_dark?LUME:PAPER);
   g_can.drawFastHLine(12,y+36,W-24,BG_LO());
   g_btns.push_back({0,y,W,36,std::move(tap)});
 }
