@@ -79,5 +79,6 @@ bool startBackflush();
 
 // Connectivity nudges
 void reconnect();                   // drop everything and re-auth (after creds edit)
+void uiTick();                      // call from UI loop — flushes debounced commands
 
 }  // namespace lmcloud

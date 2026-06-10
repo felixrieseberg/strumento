@@ -39,5 +39,6 @@ void loop() {
     else if (c=='s') { vTaskSuspend(g_cloudTask); ui::screenshot(); vTaskResume(g_cloudTask); }
   }
   ui::tick();
+  lmcloud::uiTick();
   delay(5);
 }

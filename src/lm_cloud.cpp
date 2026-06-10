@@ -293,6 +293,21 @@ static bool sendCommand(const char* cmd, JsonDocument& body) {
 static void enq(Cmd c, bool b=false, float f=0, float f2=0){
   QItem i{c,f,f2,b}; if(g_q) xQueueSend(g_q,&i,0);
 }
+// Debounced enqueue: rapid stepper taps coalesce; the cloud only sees the
+// final value once taps stop for DEBOUNCE_MS. One pending slot per Cmd kind.
+static constexpr uint32_t DEBOUNCE_MS = 600;
+static QItem    g_pend[ (int)Cmd::Reconnect ];
+static uint32_t g_pendDue[ (int)Cmd::Reconnect ] = {0};
+static void enqDebounced(Cmd c, bool b=false, float f=0, float f2=0){
+  int k=(int)c; g_pend[k]={c,f,f2,b}; g_pendDue[k]=millis()+DEBOUNCE_MS;
+}
+static void flushDebounced(){
+  uint32_t now=millis();
+  for(int k=0;k<(int)Cmd::Reconnect;++k)
+    if(g_pendDue[k] && now>=g_pendDue[k]){
+      g_pendDue[k]=0; if(g_q) xQueueSend(g_q,&g_pend[k],0);
+    }
+}
 bool setPower(bool on) {
   g_state.machine = on?MachineStatus::PoweredOn:MachineStatus::StandBy;
   if(on && g_state.coffeeStatus==BoilerStatus::Off) g_state.coffeeStatus=BoilerStatus::HeatingUp;
@@ -305,12 +320,12 @@ bool setSteam(bool on) {
 }
 bool setCoffeeTemp(float c) {
   g_state.coffeeTarget=roundf(c*10)/10; changed();
-  enq(Cmd::CoffeeTemp,0,c); return true;
+  enqDebounced(Cmd::CoffeeTemp,0,c); return true;
 }
 bool setSteamLevel(uint8_t lvl) {
   lvl = constrain(lvl,(uint8_t)1,(uint8_t)3);
   g_state.steamLevel=lvl; changed();
-  enq(Cmd::SteamLevel,false,(float)lvl); return true;
+  enqDebounced(Cmd::SteamLevel,false,(float)lvl); return true;
 }
 bool setPreMode(PreMode m) {
   g_state.preMode=m; g_state.preBrewOn=(m!=PreMode::Disabled);
@@ -323,15 +338,16 @@ bool setPreBrewTimes(float in,float out){
   in =constrain(roundf(in *10)/10, 1.f,9.f);
   out=constrain(roundf(out*10)/10, 1.f,9.f);
   g_state.preBrewIn=in; g_state.preBrewOut=out; changed();
-  enq(Cmd::PreBrewTimes,false,in,out); return true;
+  enqDebounced(Cmd::PreBrewTimes,false,in,out); return true;
 }
 bool setSmartStandby(bool en,int min,bool afterBrew){
   min = constrain(min,5,120);
   g_state.sbEnabled=en; g_state.sbMinutes=min; g_state.sbAfterBrew=afterBrew;
-  changed(); enq(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
+  changed(); enqDebounced(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
 }
 bool startBackflush()       { enq(Cmd::Backflush);     return true; }
 void reconnect()            { enq(Cmd::Reconnect); }
+void uiTick()               { flushDebounced(); }
 
 static void execCmd(const QItem& i){
   JsonDocument b;

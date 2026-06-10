@@ -399,8 +399,10 @@ static void stepRow(int y,const char* label,float v,float step,
     g_can.drawWideLine(bx-5,y+18,bx+5,y+18,1.0f,FG());
     if(bx==bx1) g_can.drawWideLine(bx,y+13,bx,y+23,1.0f,FG());
   }
-  g_btns.push_back({bx0-16,y+2,32,32,[=]{ set(v-step); }});
-  g_btns.push_back({bx1-16,y+2,32,32,[=]{ set(v+step); }});
+  // generous hit-rects: split the right half of the row at the value centre,
+  // and let "+" extend to the screen edge.
+  g_btns.push_back({bx0-22,y,vcx-(bx0-22),36,[=]{ set(v-step); }});
+  g_btns.push_back({vcx,   y,W-vcx,        36,[=]{ set(v+step); }});
   g_can.drawFastHLine(12,y+36,W-24,BG_LO());
 }
 
@@ -696,7 +698,6 @@ void tick(){
   }
   if (t.wasReleased() && !g_dragging){
     for(auto& b:g_btns) if(t.x>=b.x&&t.x<b.x+b.w&&t.y>=b.y&&t.y<b.y+b.h){
-      g_can.fillRect(b.x,b.y,b.w,b.h,BRASS); g_can.pushSprite(0,0); delay(60);
       M5.Speaker.tone(2200,18);
       if(b.tap) b.tap();
       g_dirty=true; break;
