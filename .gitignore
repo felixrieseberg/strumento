@@ -1,0 +1,10 @@
+.pio/
+.venv/
+.vscode/
+compile_commands.json
+dashboard.json
+settings.json
+src/secrets.h
+shots/*.png
+shots/*.html
+.cache/
