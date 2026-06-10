@@ -2,9 +2,10 @@
 
 **The missing display for La Marzocco espresso machines.**
 Runs standalone on an [M5Stack Core2](https://shop.m5stack.com/products/m5stack-core2-esp32-iot-development-kit).
-Live coffee-boiler temperature on an analog dial, an instant full-screen shot
-timer the moment you pull the paddle, and one-tap power / steam / pre-brew /
-backflush controls. No Home Assistant, no BLE pairing, no proxy box.
+The main screen is an analog boiler-temp dial; pull the paddle and the whole
+display turns into a shot timer. Touch controls cover the rest (power, steam,
+pre-brew, backflush). It talks straight to La Marzocco's cloud, so there's no
+Home Assistant or Bluetooth bridge in the way.
 
 ### → [Flash it from your browser](https://OWNER.github.io/REPO/)
 
@@ -20,7 +21,9 @@ backflush controls. No Home Assistant, no BLE pairing, no proxy box.
 | GS3 AV | Expected to work (110°C scale, per-dose pre-brew shows DoseA) |
 | GS3 MP | Likely works (untested; no pre-brew) |
 
-Strumento gates every control on the capability flags the machine itself reports, so any model the official app supports should work — open an issue with your model if something's off.
+The UI checks the machine's capability flags and hides anything that doesn't
+apply, so whatever the official app can drive should work here too. Open an
+issue with your model if it doesn't.
 
 ## Hardware
 
@@ -73,10 +76,10 @@ python3 tools/monitor.py                 # serial log
 
 | Screen | |
 |---|---|
-| **Home** | Analog-style coffee-boiler gauge (mimics the LM brew dial), steam status, last-shot time, pre-brew config. Power toggle. |
-| **Brewing** | Auto-appears the moment the paddle is pulled. Full-screen 0.1 s shot timer with sweep arc, synced to the machine's `brewingStartTime` so latency doesn't skew the reading. |
-| **Controls** | Steam boiler on/off · Pre-brewing on/off · Brew temp ±0.5 °C · Backflush. |
-| **Settings** | On-device QWERTY for WiFi + La Marzocco credentials. Stored in NVS. **Reconnect** applies changes. |
+| **Home** | Coffee-boiler temp on an analog gauge styled after the LM brew dial. Also steam status, last shot time and the current pre-brew setting. Tap to toggle power. |
+| **Brewing** | Takes over automatically when you pull a shot. Big 0.1 s timer with a sweep arc, synced to the machine's `brewingStartTime` so network lag doesn't throw the count off. |
+| **Controls** | Steam boiler on/off, pre-brewing on/off, brew temp ±0.5 °C, backflush. |
+| **Settings** | On-device keyboard for WiFi and La Marzocco credentials. Saved to NVS. Hit **Reconnect** to apply. |
 
 ## How it talks to the machine
 
