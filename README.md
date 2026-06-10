@@ -9,9 +9,20 @@ a USB-C cable. You can then install this firmware directly
 
 ## Making your own
 
-First, buy some ESP32 hardware. I've used the $50
+I built this on a $50
 [M5Stack Core2](https://shop.m5stack.com/products/m5stack-core2-esp32-iot-development-kit)
-but you could probably use plenty of other devices.
+because it's a tidy package, but the firmware isn't married to it. It's
+written against [M5Unified](https://github.com/m5stack/M5Unified), so other
+boards in that family (Core2 v1.1, CoreS3, Tough) should work with at most a
+`platformio.ini` board swap. If you want to port it to something else
+entirely, the actual requirements are:
+
+- ESP32 with WiFi and PSRAM
+- A 320×240 touch display that LovyanGFX can drive
+- ~2 MB of flash for the firmware
+
+The pre-built web installer image is Core2-only; anything else means building
+from source ([BUILDING.md](BUILDING.md)).
 
 You also need the **La Marzocco app account** you already have (the
 email/password you use in the official app, with your machine paired) and a
