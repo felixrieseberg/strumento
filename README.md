@@ -1,11 +1,10 @@
 # Strumento
 
-**The missing display for La Marzocco espresso machines.**
+**The missing display for La Marzocco espresso machines:**
 
 The main screen is an analog boiler-temp dial; pull the paddle and the whole
 display turns into a shot timer. Touch controls cover the rest (power, steam,
-pre-brew, backflush). It talks straight to La Marzocco's cloud, so there's
-nothing else to set up.
+pre-brew, backflush). 
 
 ### → [Flash it from your browser](https://felixrieseberg.github.io/strumento/)
 
