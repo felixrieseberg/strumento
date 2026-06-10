@@ -292,32 +292,23 @@ static void renderHome(const lmcloud::State& s){
     default: homeDial(s,on,temp,cstat);
   }
 
-  // page dots — sit between dial bezel (bottom 178) and infoline (192)
+  // ── infoline + page dots (the dots double as the divider) ──
+  const int ly=KEY_Y-12, dotW=(HOME_PAGES-1)*10;
   for(int i=0;i<HOME_PAGES;++i)
-    g_can.drawSpot(W/2-(HOME_PAGES-1)*6+i*12, 183, 2,
-                   i==g_homePage?BRASS:INK_40);
+    g_can.drawSpot(W/2-dotW/2+i*10, ly, 2, i==g_homePage?BRASS:INK_40);
 
-  // ── infoline ──
   int  cleanDays = s.lastCleanMs ? (int)((epochMs()-s.lastCleanMs)/86400000) : -1;
   bool cleanDue  = cleanDays > 7;
   if (s.lastShotSec>0){
     char l[20],rb[16];
     snprintf(l,sizeof l,"LAST  %.1fs",s.lastShotSec);
-    int ly=KEY_Y-10;
-    tracked(W/2-12,ly,l,1,INK_40,&F_LABEL_SM,middle_right);
-    g_can.drawSpot(W/2,ly,2,BRASS);
-    if (cleanDue){
-      snprintf(rb,sizeof rb,"CLEAN  %dd",cleanDays);
-      tracked(W/2+12,ly,rb,1,LM_RED,&F_LABEL_SM,middle_left);
-    } else {
-      snprintf(rb,sizeof rb,"%s AGO",ago(s.lastShotAtMs).c_str());
-      tracked(W/2+12,ly,rb,1,INK_40,&F_LABEL_SM,middle_left);
-    }
+    tracked(W/2-dotW/2-12,ly,l,1,INK_40,&F_LABEL_SM,middle_right);
+    if (cleanDue) snprintf(rb,sizeof rb,"CLEAN  %dd",cleanDays);
+    else          snprintf(rb,sizeof rb,"%s AGO",ago(s.lastShotAtMs).c_str());
+    tracked(W/2+dotW/2+12,ly,rb,1,cleanDue?LM_RED:INK_40,&F_LABEL_SM,middle_left);
   } else if (cleanDue){
     char rb[16]; snprintf(rb,sizeof rb,"CLEAN  %dd",cleanDays);
-    tracked(W/2,KEY_Y-10,rb,2,LM_RED,&F_LABEL_SM,middle_center);
-  } else {
-    tracked(W/2,KEY_Y-10,s.serial.c_str(),2,INK_40,&F_LABEL_SM,middle_center);
+    tracked(W/2+dotW/2+12,ly,rb,1,LM_RED,&F_LABEL_SM,middle_left);
   }
 
   keys({
