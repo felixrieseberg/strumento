@@ -2,6 +2,7 @@
 #include "lm_crypto.h"
 #include "storage.h"
 #include "config.h"
+#include "lm_ca.h"
 
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -104,7 +105,7 @@ static void applyDashboard(JsonDocument& doc) {
 // ── REST ─────────────────────────────────────────────────────────────────────
 static int httpJson(const char* method, const String& path, const String& body,
                     JsonDocument* out, bool auth) {
-  WiFiClientSecure tls; tls.setInsecure();      // LM rotates certs; pinning is brittle
+  WiFiClientSecure tls; tls.setCACert(LM_ROOT_CA);      // LM rotates certs; pinning is brittle
   HTTPClient http; http.setReuse(false); http.setTimeout(12000);
   String url = String(cfg::LM_API) + path;
   if (!http.begin(tls, url)) return -1;
@@ -130,7 +131,7 @@ static int httpJson(const char* method, const String& path, const String& body,
 }
 
 static bool registerInstall() {
-  WiFiClientSecure tls; tls.setInsecure();
+  WiFiClientSecure tls; tls.setCACert(LM_ROOT_CA);
   HTTPClient http; http.setTimeout(12000);
   if (!http.begin(tls, String(cfg::LM_API) + "/auth/init")) return false;
   http.addHeader("X-App-Installation-Id", lmcrypto::installationId());
@@ -327,7 +328,7 @@ static void wsStart() {
   g_ws.onEvent(onWsEvent);
   g_ws.setReconnectInterval(5000);
   g_ws.enableHeartbeat(15000, 5000, 2);   // matches aiohttp heartbeat=15
-  g_ws.beginSSL(cfg::LM_HOST, 443, "/ws/connect");
+  g_ws.beginSslWithCA(cfg::LM_HOST, 443, "/ws/connect", LM_ROOT_CA);
   Serial.println("[ws] beginSSL");
 }
 
