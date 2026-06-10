@@ -19,7 +19,11 @@ void setup() {
 
   settings.load();
   ui::begin();
-  ui::splash("waking up …");
+  if (settings.wifiSsid.isEmpty() || settings.lmUser.isEmpty()) {
+    ui::forceSetup();                       // first boot — straight to credentials
+  } else {
+    ui::splash("waking up …");
+  }
 
   if (!lmcrypto::init()) { ui::splash("crypto init failed"); delay(3000); }
   // Network/cloud on core 0; UI/touch stays on core 1 (Arduino loop).

@@ -21,11 +21,12 @@ static time_t                g_tokenExpiry = 0;
 static bool                  g_registered  = false;
 static bool                  g_wsSubscribed = false;
 static String                g_wsHdr;             // keep alive while WS holds the c_str
-static uint32_t              g_nextPoll = 0, g_nextWifiTry = 0, g_nextWsTry = 0;
+static uint32_t              g_nextPoll = 0, g_nextSlowPoll = 0,
+                             g_nextWifiTry = 0, g_nextWsTry = 0;
 
 // cross-task command queue (UI → cloud task)
 enum class Cmd : uint8_t { None, Power, Steam, CoffeeTemp, PreBrew, PreBrewTimes,
-                           Backflush, Reconnect };
+                           SmartStandby, Backflush, Reconnect };
 struct QItem { Cmd c; float f, f2; bool b; };
 static QueueHandle_t g_q;
 
@@ -79,6 +80,9 @@ static void applyWidgets(JsonArrayConst widgets) {
     } else if (!strcmp(code, "CMSteamBoilerTemperature")) {
       g_state.steamStatus  = parseBoiler(o["status"] | "");
       g_state.steamEnabled = o["enabled"] | false;
+    } else if (!strcmp(code, "CMBackFlush")) {
+      if (!o["lastCleaningStartTime"].isNull())
+        g_state.lastCleanMs = (int64_t)(o["lastCleaningStartTime"].as<double>());
     } else if (!strcmp(code, "CMPreBrewing")) {
       const char* m = o["mode"] | "Disabled";
       g_state.preBrewOn = strcmp(m, "Disabled") != 0;
@@ -178,6 +182,74 @@ static void pollDashboard() {
   if (code == 200) applyDashboard(resp);
 }
 
+static void discoverSerial() {
+  if (!settings.lmSerial.isEmpty()) return;
+  JsonDocument resp;
+  int code = httpJson("GET", "/things", "", &resp, true);
+  Serial.printf("[lm] /things -> %d\n", code);
+  if (code != 200) return;
+  JsonArrayConst arr = resp.as<JsonArrayConst>();
+  if (arr.isNull() || arr.size() == 0) return;
+  const char* sn = arr[0]["serialNumber"] | "";
+  if (!*sn) return;
+  settings.lmSerial = sn; settings.save();
+  g_state.serial = sn;
+  Serial.printf("[lm] auto-discovered serial %s\n", sn);
+}
+
+static uint8_t dayBit(const char* d) {
+  static const char* D[] = {"Monday","Tuesday","Wednesday","Thursday",
+                            "Friday","Saturday","Sunday"};
+  for (int i=0;i<7;++i) if (!strcmp(d,D[i])) return 1<<i;
+  return 0;
+}
+
+static void pollSlowState() {
+  String base = "/things/" + settings.lmSerial;
+  { JsonDocument r;
+    if (httpJson("GET", base+"/scheduling", "", &r, true) == 200) {
+      JsonObjectConst sb = r["smartStandBy"];
+      if (!sb.isNull()) {
+        g_state.sbEnabled   = sb["enabled"] | g_state.sbEnabled;
+        g_state.sbMinutes   = sb["minutes"] | g_state.sbMinutes;
+        const char* a = sb["after"] | "LastBrewing";
+        g_state.sbAfterBrew = !strcmp(a, "LastBrewing");
+      }
+      g_state.schedules.clear();
+      for (JsonObjectConst s : r["smartWakeUpSleep"]["schedules"].as<JsonArrayConst>()) {
+        WakeSched w;
+        w.id      = s["id"] | "";
+        w.enabled = s["enabled"] | false;
+        w.steam   = s["steamBoiler"] | false;
+        w.onMin   = s["onTimeMinutes"]  | 0;
+        w.offMin  = s["offTimeMinutes"] | 0;
+        for (JsonVariantConst d : s["days"].as<JsonArrayConst>())
+          w.dayMask |= dayBit(d | "");
+        g_state.schedules.push_back(w);
+      }
+    }
+  }
+  { JsonDocument r;
+    if (httpJson("GET", base+"/settings", "", &r, true) == 200) {
+      g_state.plumbedIn = r["isPlumbedIn"] | g_state.plumbedIn;
+      g_state.wifiRssi  = r["wifiRssi"]    | g_state.wifiRssi;
+      g_state.firmwares.clear();
+      for (JsonObjectConst f : r["actualFirmwares"].as<JsonArrayConst>())
+        g_state.firmwares.push_back({ f["type"]|"", f["buildVersion"]|"", f["status"]|"" });
+    }
+  }
+  { JsonDocument r;
+    if (httpJson("GET", base+"/stats/COFFEE_AND_FLUSH_COUNTER/1", "", &r, true) == 200) {
+      JsonObjectConst o = r["output"];
+      g_state.totalCoffee = o["totalCoffee"] | g_state.totalCoffee;
+      g_state.totalFlush  = o["totalFlush"]  | g_state.totalFlush;
+    }
+  }
+  Serial.printf("[lm] slow poll: sched=%u fw=%u coffee=%d\n",
+                g_state.schedules.size(), g_state.firmwares.size(), g_state.totalCoffee);
+  changed();
+}
+
 static bool sendCommand(const char* cmd, JsonDocument& body) {
   String s; serializeJson(body, s);
   int code = httpJson("POST", "/things/" + settings.lmSerial + "/command/" + cmd, s, nullptr, true);
@@ -211,6 +283,11 @@ bool setPreBrewTimes(float in,float out){
   g_state.preBrewIn=in; g_state.preBrewOut=out; changed();
   enq(Cmd::PreBrewTimes,false,in,out); return true;
 }
+bool setSmartStandby(bool en,int min,bool afterBrew){
+  min = constrain(min,5,120);
+  g_state.sbEnabled=en; g_state.sbMinutes=min; g_state.sbAfterBrew=afterBrew;
+  changed(); enq(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
+}
 bool startBackflush()       { enq(Cmd::Backflush);     return true; }
 void reconnect()            { enq(Cmd::Reconnect); }
 
@@ -230,12 +307,16 @@ static void execCmd(const QItem& i){
       b["groupIndex"]=1; b["doseIndex"]="ByGroup";
       sendCommand("CoffeeMachinePreBrewingSettingTimes",b); break;
     }
+    case Cmd::SmartStandby:
+      b["enabled"]=i.b; b["minutes"]=(int)i.f;
+      b["after"]=(i.f2>0.5f)?"LastBrewing":"PowerOn";
+      sendCommand("CoffeeMachineSettingSmartStandBy",b); break;
     case Cmd::Backflush:  b["enabled"]=true;
                           sendCommand("CoffeeMachineBackFlushStartCleaning",b); break;
     case Cmd::Reconnect:
       g_ws.disconnect(); WiFi.disconnect(true,false);
       g_access=""; g_refresh=""; g_registered=false; g_wsSubscribed=false;
-      g_nextWifiTry=0; g_nextPoll=0; g_nextWsTry=0;
+      g_nextWifiTry=0; g_nextPoll=0; g_nextSlowPoll=0; g_nextWsTry=0;
       setNet(Net::Down,"reconnect");
       break;
     default: break;
@@ -370,8 +451,11 @@ void loop() {
   if (!ensureAuth()) return;
   if (g_state.net < Net::AuthOk) {
     setNet(Net::AuthOk, "");
+    discoverSerial();
     pollDashboard();
-    g_nextPoll = millis() + cfg::POLL_DASHBOARD_MS;
+    pollSlowState();
+    g_nextPoll     = millis() + cfg::POLL_DASHBOARD_MS;
+    g_nextSlowPoll = millis() + cfg::POLL_SLOW_MS;
     wsStart();
   }
 
@@ -380,6 +464,10 @@ void loop() {
   if (millis() > g_nextPoll) {
     g_nextPoll = millis() + cfg::POLL_DASHBOARD_MS;
     if (!g_wsSubscribed) pollDashboard();   // REST fallback
+  }
+  if (millis() > g_nextSlowPoll) {
+    g_nextSlowPoll = millis() + cfg::POLL_SLOW_MS;
+    pollSlowState();
   }
 }
 
