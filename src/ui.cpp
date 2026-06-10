@@ -67,6 +67,7 @@ static int      g_dragStartY = 0, g_dragStartScroll = 0;
 static int      g_dragStartX = 0;
 static int      g_homePage   = 0;       // 0=dial 1=tally 2=clock
 static constexpr int HOME_PAGES = 3;
+static uint32_t g_vibOffAt   = 0;       // non-blocking haptic deadline
 
 struct Btn { int x,y,w,h; std::function<void()> tap; };
 static std::vector<Btn> g_btns;
@@ -94,7 +95,8 @@ static String hhmm(int min){ char b[8]; snprintf(b,sizeof b,"%02d:%02d",min/60,m
 static int tracked(int x, int y, const char* s, int track,
                    uint16_t col, const lgfx::IFont* f, lgfx::textdatum_t d=top_left) {
   g_can.setFont(f); g_can.setTextColor(col); g_can.setTextDatum(top_left);
-  int total=0; for(const char*p=s;*p;++p) total += g_can.textWidth(String(*p)) + track;
+  char ch[2]={0,0};
+  int total=0; for(const char*p=s;*p;++p){ ch[0]=*p; total += g_can.textWidth(ch)+track; }
   total -= track;
   int cx = x;
   if (d==top_center||d==middle_center||d==bottom_center) cx -= total/2;
@@ -102,7 +104,7 @@ static int tracked(int x, int y, const char* s, int track,
   int cy = y;
   if (d==middle_left||d==middle_center||d==middle_right) cy -= g_can.fontHeight()/2;
   for(const char*p=s;*p;++p){
-    String ch(*p);
+    ch[0]=*p;
     g_can.drawString(ch,cx,cy);
     cx += g_can.textWidth(ch) + track;
   }
@@ -231,9 +233,10 @@ static void keys(std::initializer_list<std::pair<const char*,std::function<void(
 static void homeDial(const lmcloud::State& s,bool on,float temp,
                      lmcloud::BoilerStatus cstat){
   const int cx=W/2, cy=106, r=66;
-  float range = s.coffeeTempMax - s.coffeeTempMin;
+  float range = max(2.f, s.coffeeTempMax - s.coffeeTempMin);
+  int   nT = max(4,(int)(range*2)), maj = max(1,(int)(range/2));
   bezel(cx,cy,r,FACE());
-  ticks(cx,cy,r, (int)(range*2),(int)(range/2), 135,270, INK_40,FG());
+  ticks(cx,cy,r, nT,maj, 135,270, INK_40,FG());
   g_can.fillRect(cx-1, cy-r+2, 3, 8, LM_RED);
   if (on && temp>0){
     float frac=constrain((temp-s.coffeeTempMin)/range,0.f,1.f);
@@ -338,7 +341,7 @@ static void renderBrewing(const lmcloud::State& s){
   if (isec < s_buzzedAt) s_buzzedAt = -1;             // new shot started
   if ((isec==25 || isec==30) && isec!=s_buzzedAt){
     s_buzzedAt = isec;
-    M5.Power.setVibration(128); delay(40); M5.Power.setVibration(0);
+    M5.Power.setVibration(128); g_vibOffAt = millis()+40;
     M5.Speaker.tone(1800,60);
   }
 
@@ -603,6 +606,7 @@ static void renderSettings(){
 
 // ── frame ────────────────────────────────────────────────────────────────────
 static void render(){
+  lmcloud::lockState();
   auto& s=lmcloud::state();
   if (g_dbgBrewSec>=0){ /* debug: honour g_scr as set */ }
   else if (s.machine==lmcloud::MachineStatus::Brewing && g_scr!=Screen::Settings)
@@ -617,6 +621,7 @@ static void render(){
     case Screen::Settings: renderSettings();  break;
     case Screen::Stats:    renderStats(s);    break;
   }
+  lmcloud::unlockState();
   g_can.pushSprite(0,0);
 }
 
@@ -681,6 +686,7 @@ void debugScreen(int n,float arg){
 
 void tick(){
   M5.update();
+  if (g_vibOffAt && millis()>=g_vibOffAt){ M5.Power.setVibration(0); g_vibOffAt=0; }
   auto t=M5.Touch.getDetail();
   bool scrollable = (g_scr==Screen::Controls || g_scr==Screen::Stats ||
                      g_scr==Screen::Settings);

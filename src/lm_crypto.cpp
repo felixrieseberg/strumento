@@ -26,6 +26,7 @@ String b64(const uint8_t* p, size_t n) {
   size_t cap = 4 * ((n + 2) / 3) + 4;
   String out; out.reserve(cap);
   uint8_t* buf = (uint8_t*)malloc(cap);
+  if (!buf) return out;
   mbedtls_base64_encode(buf, cap, &outLen, p, n);
   out.concat((const char*)buf, outLen);
   free(buf);

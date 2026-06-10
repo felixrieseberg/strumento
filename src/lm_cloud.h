@@ -65,6 +65,9 @@ void begin();                       // call once after settings.load() + WiFi up
 void loop();                        // call every iteration
 const State& state();
 void onChange(std::function<void()> cb);
+// Hold while reading vectors/Strings inside State (UI thread, one render frame).
+void lockState();
+void unlockState();
 
 // Commands (fire-and-forget; state updates arrive via WS)
 bool setPower(bool on);

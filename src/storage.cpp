@@ -2,8 +2,13 @@
 #include <string.h>
 
 Settings settings;
+static SemaphoreHandle_t s_mtx = nullptr;
+static inline void take(){ if(!s_mtx) s_mtx=xSemaphoreCreateMutex();
+                           xSemaphoreTake(s_mtx,portMAX_DELAY); }
+static inline void give(){ xSemaphoreGive(s_mtx); }
 
 void Settings::load() {
+  take();
   p_.begin("lm", false);
   wifiSsid = p_.getString("ws", cfg::DEF_WIFI_SSID);
   wifiPass = p_.getString("wp", cfg::DEF_WIFI_PASS);
@@ -16,9 +21,11 @@ void Settings::load() {
   size_t n = p_.getBytes("epk", ecPriv, sizeof ecPriv);
   ecPrivValid = (n == sizeof ecPriv);
   p_.end();
+  give();
 }
 
 void Settings::save() {
+  take();
   p_.begin("lm", false);
   p_.putString("ws", wifiSsid);
   p_.putString("wp", wifiPass);
@@ -30,6 +37,7 @@ void Settings::save() {
   p_.putString("iid", instId);
   if (ecPrivValid) p_.putBytes("epk", ecPriv, sizeof ecPriv);
   p_.end();
+  give();
 }
 
 void Settings::factoryReset() {
