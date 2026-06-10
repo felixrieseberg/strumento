@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Strumento — La Marzocco companion</title>
+<style>
+  :root {
+    --ivory: #F4EFE3; --ink: #1C1A17; --ink-40: #8A8578;
+    --brass: #B08D57; --lm-red: #C8102E; --paper: #FAF7EF;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ivory); color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 56px 24px 80px; }
+  h1 {
+    font: italic 400 52px/1 Georgia, "Times New Roman", serif;
+    letter-spacing: 0.02em; margin: 0 0 4px;
+  }
+  h1 .accent { color: var(--lm-red); }
+  .sub { color: var(--ink-40); margin: 0 0 40px; font-size: 15px; }
+  h2 {
+    font: 600 12px/1 -apple-system, sans-serif; text-transform: uppercase;
+    letter-spacing: 0.14em; color: var(--ink-40);
+    border-top: 1px solid var(--brass); padding-top: 20px; margin: 40px 0 14px;
+  }
+  ul { margin: 0 0 8px; padding-left: 20px; }
+  li { margin: 6px 0; }
+  li b { font-weight: 600; }
+  .flash {
+    background: var(--paper); border: 1px solid var(--brass); border-radius: 6px;
+    padding: 28px 24px; margin: 12px 0 8px; text-align: center;
+  }
+  esp-web-install-button {
+    --esp-tools-button-color: var(--lm-red);
+    --esp-tools-button-text-color: #fff;
+    --esp-tools-button-border-radius: 4px;
+  }
+  .flash p { margin: 14px 0 0; font-size: 13px; color: var(--ink-40); }
+  ol { margin: 0; padding-left: 22px; }
+  ol li { margin: 10px 0; }
+  code {
+    font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--paper); border: 1px solid var(--brass);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  a { color: var(--lm-red); }
+  footer {
+    margin-top: 56px; border-top: 1px solid var(--brass); padding-top: 16px;
+    font-size: 13px; color: var(--ink-40);
+  }
+</style>
+<script type="module" src="https://unpkg.com/esp-web-tools/dist/web/install-button.js"></script>
+</head>
+<body>
+<main>
+  <h1>Strumento<span class="accent">.</span></h1>
+  <p class="sub">A bench-top gauge &amp; shot timer for the La&nbsp;Marzocco Linea&nbsp;Mini.
+    Runs on an M5Stack&nbsp;Core2. No Home&nbsp;Assistant, no proxy.</p>
+
+  <h2>You'll need</h2>
+  <ul>
+    <li><b>M5Stack Core2</b> (or Core2 v1.1) — ESP32, 320×240 touch</li>
+    <li><b>USB-C cable</b> that carries data, plugged into this computer</li>
+    <li>A <b>La Marzocco app account</b> with your machine paired</li>
+    <li><b>Chrome</b> or <b>Edge</b> on desktop — Safari &amp; Firefox don't do Web&nbsp;Serial</li>
+  </ul>
+
+  <h2>Flash</h2>
+  <div class="flash">
+    <esp-web-install-button manifest="./manifest.json">
+      <span slot="unsupported">Your browser can't talk to serial ports.
+        Open this page in Chrome or Edge on a desktop.</span>
+      <span slot="not-allowed">Web Serial needs HTTPS — open the hosted page, not a local file.</span>
+    </esp-web-install-button>
+    <p>Click <b>Connect</b>, pick the <code>USB&nbsp;Single&nbsp;Serial</code> /
+      <code>CP2104</code> port, then <b>Install&nbsp;Strumento</b>. Takes about 90&nbsp;seconds.</p>
+  </div>
+
+  <h2>First boot</h2>
+  <ol>
+    <li>The device starts on the Home gauge with no connection.</li>
+    <li>Tap <b>SETUP</b> (right-hand piano key).</li>
+    <li>Enter your <b>WiFi</b> name &amp; password, then your <b>La&nbsp;Marzocco</b>
+        email &amp; password. Serial number is optional — it's auto-discovered if you
+        only have one machine.</li>
+    <li>Tap <b>Reconnect</b>. The boiler needle swings live within a few seconds.</li>
+  </ol>
+
+  <footer>
+    Not affiliated with La&nbsp;Marzocco&nbsp;S.r.l. ·
+    <a href="https://github.com/OWNER/REPO">Source &amp; build-from-scratch instructions</a>
+  </footer>
+</main>
+</body>
+</html>

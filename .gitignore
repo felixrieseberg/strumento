@@ -8,3 +8,4 @@ src/secrets.h
 shots/*.png
 shots/*.html
 .cache/
+__pycache__/
