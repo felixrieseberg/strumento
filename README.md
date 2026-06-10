@@ -44,12 +44,10 @@ network and La Marzocco's cloud.
 | Linea Mini | Fully tested |
 | Linea Mini R | Expected to work |
 | Linea Micra | Expected to work |
-| GS3 AV | Expected to work |
-| GS3 MP | Likely works (untested) |
+| GS3 AV | Untested |
+| GS3 MP | Untested |
 
-The UI checks the machine's capability flags and hides anything that doesn't
-apply, so whatever the official app can drive should work here too. Open an
-issue with your model if it doesn't.
+Open an issue with your model if something's off.
 
 ## License
 

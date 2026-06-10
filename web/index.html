@@ -130,6 +130,7 @@
     background:var(--paper); margin:0;
   }
   .machines li.tested { border-color:var(--lm-red); color:var(--lm-red); }
+  .machines li.untested { opacity:.5; border-style:dashed; }
 
   footer {
     margin-top:64px; border-top:1px solid var(--brass); padding-top:18px;
@@ -220,12 +221,11 @@
     <li class="tested">Linea Mini</li>
     <li>Linea Mini R</li>
     <li>Linea Micra</li>
-    <li>GS3 AV</li>
-    <li>GS3 MP</li>
+    <li class="untested">GS3 AV</li>
+    <li class="untested">GS3 MP</li>
   </ul>
   <p style="font-size:14px;color:var(--ink-40);text-align:center;margin-top:16px">
-    The UI checks the machine's capability flags and hides anything that doesn't apply,
-    so whatever the official app can drive should work here too.</p>
+    GS3 models are untested. Open an issue with your model if something's off.</p>
 
   <footer>
     MIT &middot; not affiliated with La&nbsp;Marzocco&nbsp;S.r.l. &middot;
