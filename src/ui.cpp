@@ -585,7 +585,7 @@ void screenshot(){
 void debugScreen(int n,float arg){
   g_dbgBrewSec = (n==1)?arg:-1;
   g_dbgOn      = (n==4);
-  g_scr = (n==4)?Screen::Home:(Screen)n;
+  g_scr = (n==4)?Screen::Home : (n==5)?Screen::Stats : (Screen)n;
   render();
 }
 

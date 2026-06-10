@@ -9,7 +9,7 @@ from PIL import Image
 B64=re.compile(r"^[A-Za-z0-9+/]{4,}=*$")
 
 PORT="/dev/cu.usbserial-5B1F0085301"; W,H=320,240
-SCREENS={"home_on":"4","home_standby":"0","brew":"1","controls":"2","setup":"3"}
+SCREENS={"home_on":"4","home_standby":"0","brew":"1","controls":"2","stats":"5","setup":"3"}
 os.makedirs("shots",exist_ok=True)
 
 p=serial.Serial(PORT,115200,timeout=0.5)
