@@ -1,12 +1,11 @@
 .pio/
 .venv/
 .vscode/
+.cache/
+__pycache__/
 compile_commands.json
 dashboard.json
 settings.json
+shots/
 src/secrets.h
-shots/*.png
-shots/*.html
-.cache/
-__pycache__/
 src/version.h
