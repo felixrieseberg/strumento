@@ -593,7 +593,7 @@ void splash(const char* line){
   g_can.fillScreen(BG());
   g_can.setTextDatum(middle_center);
   g_can.setFont(&F_WORDMARK); g_can.setTextColor(FG());
-  g_can.drawString("linea mini", W/2, H/2-18);
+  g_can.drawString("strumento", W/2, H/2-18);
   g_can.drawFastHLine(W/2-56,H/2+6,112,BRASS);
   tracked(W/2,H/2+22,STRUMENTO_VERSION,3,INK_40,&F_LABEL_SM,middle_center);
   g_can.setFont(&F_LABEL_SM); g_can.setTextColor(INK_40);
