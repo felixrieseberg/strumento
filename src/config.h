@@ -52,6 +52,7 @@ constexpr const char* DEF_LM_SERIAL = SECRET_LM_SERIAL;
 
 // Timing
 constexpr uint32_t POLL_DASHBOARD_MS = 30000;   // REST fallback when WS quiet
+constexpr uint32_t POLL_SLOW_MS      = 300000;  // scheduling/settings/stats
 constexpr uint32_t TOKEN_REFRESH_SLOP_S = 600;  // refresh 10 min before expiry
 
 }  // namespace cfg

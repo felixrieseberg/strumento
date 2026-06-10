@@ -37,7 +37,7 @@ static AAFont AA_WORDMARK, AA_SERIF_SM, AA_LABEL, AA_LABEL_SM, AA_NUM_LG, AA_NUM
 #define F_NUM_LG    AA_NUM_LG.vlw
 #define F_NUM_MD    AA_NUM_MD.vlw
 
-enum class Screen { Home, Brewing, Controls, Settings };
+enum class Screen { Home, Brewing, Controls, Settings, Stats };
 static Screen   g_scr = Screen::Home;
 static bool     g_dirty = true;
 static M5Canvas g_can(&M5.Display);
@@ -65,10 +65,12 @@ static String fmtClock() {
 static String ago(int64_t atMs) {
   if (!atMs) return "—";
   int64_t s = (epochMs()-atMs)/1000;
-  if (s<90) return String((int)s)+"s";
-  if (s<5400) return String((int)(s/60))+"m";
-  return String((int)(s/3600))+"h";
+  if (s<90)     return String((int)s)+"s";
+  if (s<5400)   return String((int)(s/60))+"m";
+  if (s<172800) return String((int)(s/3600))+"h";
+  return String((int)(s/86400))+"d";
 }
+static String hhmm(int min){ char b[8]; snprintf(b,sizeof b,"%02d:%02d",min/60,min%60); return b; }
 
 // Letterspaced small-caps. M5GFX has no tracking, so draw glyph-by-glyph.
 static int tracked(int x, int y, const char* s, int track,
@@ -246,15 +248,26 @@ static void renderHome(const lmcloud::State& s){
     g_can.drawSpot(cx,cy+28,3,INK_40);
   }
 
-  // ── infoline under the dial ── drawn as two halves around a brass dot
+  // ── infoline under the dial ── two halves around a brass dot.
+  // Right half doubles as a clean-due nudge when last backflush > 7d.
+  int     cleanDays = s.lastCleanMs ? (int)((epochMs()-s.lastCleanMs)/86400000) : -1;
+  bool    cleanDue  = cleanDays > 7;
   if (s.lastShotSec>0){
-    char l[20],r[16];
+    char l[20],rb[16];
     snprintf(l,sizeof l,"LAST  %.1fs",s.lastShotSec);
-    snprintf(r,sizeof r,"%s AGO",ago(s.lastShotAtMs).c_str());
     int ly=KEY_Y-10;
     tracked(W/2-12,ly,l,1,INK_40,&F_LABEL_SM,middle_right);
     g_can.drawSpot(W/2,ly,2,BRASS);
-    tracked(W/2+12,ly,r,1,INK_40,&F_LABEL_SM,middle_left);
+    if (cleanDue){
+      snprintf(rb,sizeof rb,"CLEAN  %dd",cleanDays);
+      tracked(W/2+12,ly,rb,1,LM_RED,&F_LABEL_SM,middle_left);
+    } else {
+      snprintf(rb,sizeof rb,"%s AGO",ago(s.lastShotAtMs).c_str());
+      tracked(W/2+12,ly,rb,1,INK_40,&F_LABEL_SM,middle_left);
+    }
+  } else if (cleanDue){
+    char rb[16]; snprintf(rb,sizeof rb,"CLEAN  %dd",cleanDays);
+    tracked(W/2,KEY_Y-10,rb,2,LM_RED,&F_LABEL_SM,middle_center);
   } else {
     tracked(W/2,KEY_Y-10,s.serial.c_str(),2,INK_40,&F_LABEL_SM,middle_center);
   }
@@ -262,8 +275,8 @@ static void renderHome(const lmcloud::State& s){
   // ── piano keys ──
   keys({
     { on?"STANDBY":"WAKE", [on]{ lmcloud::setPower(!on); } },
-    { "MACHINE",          []{ g_scr=Screen::Controls; g_dirty=true; } },
-    { "SETUP",             []{ g_scr=Screen::Settings; g_dirty=true; } },
+    { "MACHINE", []{ g_scr=Screen::Controls; g_ctrlScroll=0; g_dirty=true; } },
+    { "STATS",   []{ g_scr=Screen::Stats;    g_ctrlScroll=0; g_dirty=true; } },
   });
 }
 
@@ -275,6 +288,16 @@ static void renderBrewing(const lmcloud::State& s){
   float sec = (g_dbgBrewSec>=0) ? g_dbgBrewSec
             : s.brewingStartMs ? (epochMs()-s.brewingStartMs)/1000.0f : g_shotHold;
   if (sec<0) sec=0;
+
+  // haptic + tone cue at 25s and 30s — buzz once per threshold per shot
+  static int s_buzzedAt = -1;
+  int isec = (int)sec;
+  if (isec < s_buzzedAt) s_buzzedAt = -1;             // new shot started
+  if ((isec==25 || isec==30) && isec!=s_buzzedAt){
+    s_buzzedAt = isec;
+    M5.Power.setVibration(128); delay(40); M5.Power.setVibration(0);
+    M5.Speaker.tone(1800,60);
+  }
 
   const int cx=W/2, cy=132, r=96;
   // bezel — brass ring (3px) on dark
@@ -329,9 +352,9 @@ static void toggleRow(int y,const char* label,bool on,std::function<void()> tap)
 
 // stepper row:  label · [-] value [+]
 static void stepRow(int y,const char* label,float v,float step,
-                    std::function<void(float)> set){
+                    std::function<void(float)> set,const char* fmt="%.1f"){
   tracked(18,y+18,label,2,INK,&F_LABEL,middle_left);
-  char tv[10]; snprintf(tv,sizeof tv,"%.1f",v);
+  char tv[10]; snprintf(tv,sizeof tv,fmt,v);
   int vcx=W-86;
   g_can.setFont(&F_NUM_MD); g_can.setTextColor(INK);
   g_can.setTextDatum(middle_center); g_can.drawString(tv,vcx,y+18);
@@ -346,10 +369,20 @@ static void stepRow(int y,const char* label,float v,float step,
   g_can.drawFastHLine(12,y+36,W-24,IVORY_LO);
 }
 
+// cycler row: tap value to advance through options
+static void cycleRow(int y,const char* label,const char* val,std::function<void()> tap){
+  tracked(18,y+18,label,2,INK,&F_LABEL,middle_left);
+  int vw = tracked(W-18,y+18,val,2,INK,&F_LABEL,middle_right);
+  g_can.drawFastHLine(W-18-vw,y+28,vw,BRASS);          // underline = tappable
+  g_can.drawFastHLine(12,y+36,W-24,IVORY_LO);
+  g_btns.push_back({0,y,W,36,std::move(tap)});
+}
+
 static void renderControls(const lmcloud::State& s){
   g_can.fillScreen(IVORY); vignette(); g_btns.clear();
 
   bool steamOn=s.steamEnabled, preOn=s.preBrewOn;
+  bool sbEn=s.sbEnabled, sbAfter=s.sbAfterBrew; int sbMin=s.sbMinutes;
   float t=s.coffeeTarget, pin=s.preBrewIn, pout=s.preBrewOut;
   const int top=54, viewH=KEY_Y-top;
   int y = top - g_ctrlScroll;
@@ -366,6 +399,12 @@ static void renderControls(const lmcloud::State& s){
   g_can.fillSmoothRoundRect(W-18-89,y+7,88,22,11,IVORY);
   tracked(W-18-45,y+18,"START",2,LM_RED,&F_LABEL,middle_center);
   g_btns.push_back({W-18-90,y+6,90,24,[]{ lmcloud::startBackflush(); }});       y+=40;
+  // smart standby
+  toggleRow(y,"SMART STANDBY",sbEn,[=]{ lmcloud::setSmartStandby(!sbEn,sbMin,sbAfter);}); y+=40;
+  stepRow  (y,"  STANDBY MIN",(float)sbMin,5,
+            [=](float v){ lmcloud::setSmartStandby(sbEn,(int)v,sbAfter); },"%.0f");       y+=40;
+  cycleRow (y,"  STANDBY AFTER", sbAfter?"LAST BREW":"POWER ON",
+            [=]{ lmcloud::setSmartStandby(sbEn,sbMin,!sbAfter); });                       y+=40;
 
   g_can.clearClipRect();
   int contentH = y - (top - g_ctrlScroll);
@@ -387,6 +426,61 @@ static void renderControls(const lmcloud::State& s){
     g_can.fillSmoothRoundRect(W-6,thY,3,thH,1,BRASS);
   }
   keys({{ "BACK", []{ g_scr=Screen::Home; g_ctrlScroll=0; g_dirty=true; } }});
+}
+
+// ── STATS — read-only scrollable list ────────────────────────────────────────
+static void statRow(int y,const char* k,const String& v,uint16_t vc=INK){
+  g_can.setFont(&F_SERIF_SM); g_can.setTextColor(INK_40);
+  g_can.setTextDatum(middle_left); g_can.drawString(k,18,y+16);
+  tracked(W-18,y+16,v.c_str(),1,vc,&F_LABEL_SM,middle_right);
+  g_can.drawFastHLine(12,y+32,W-24,IVORY_LO);
+}
+static String dayStr(uint8_t m){
+  static const char* D[]={"Mo","Tu","We","Th","Fr","Sa","Su"};
+  String s; for(int i=0;i<7;++i) if(m&(1<<i)) s+=D[i];
+  return s.isEmpty()?String("—"):s;
+}
+
+static void renderStats(const lmcloud::State& s){
+  g_can.fillScreen(IVORY); vignette(); g_btns.clear();
+
+  const int top=54, viewH=KEY_Y-top;
+  int y = top - g_ctrlScroll;
+  g_can.setClipRect(0,top,W,viewH);
+
+  statRow(y,"total coffees", String(s.totalCoffee));                          y+=36;
+  statRow(y,"total flushes", String(s.totalFlush));                           y+=36;
+  statRow(y,"last clean",    s.lastCleanMs?ago(s.lastCleanMs)+" AGO":"—",
+          (s.lastCleanMs && (epochMs()-s.lastCleanMs)>7LL*86400000)?LM_RED:INK); y+=36;
+  statRow(y,"water",         s.plumbedIn?"PLUMBED":"TANK");                   y+=36;
+  statRow(y,"wifi",          String(s.wifiRssi)+" dBm");                      y+=36;
+  for (auto& f : s.firmwares){
+    String k = f.type; k.toLowerCase(); k += " fw";
+    String v = f.version; if(f.status.length()) v += "  "+f.status;
+    statRow(y, k.c_str(), v);                                                 y+=36;
+  }
+  for (auto& w : s.schedules){
+    String k = "wake  "+dayStr(w.dayMask);
+    String v = hhmm(w.onMin)+"-"+hhmm(w.offMin);
+    statRow(y, k.c_str(), v, w.enabled?INK:INK_40);                           y+=36;
+  }
+
+  g_can.clearClipRect();
+  int contentH = y - (top - g_ctrlScroll);
+  g_ctrlMax = max(0, contentH - viewH);
+  // chrome
+  g_can.fillRect(0,0,W,top,IVORY); g_can.fillRect(0,KEY_Y,W,KEY_H,IVORY);
+  header(s);
+  tracked(W/2,36,"STATS",4,INK,&F_LABEL,top_center);
+  if (g_ctrlMax>0){
+    int thH = max(12, viewH*viewH/contentH);
+    int thY = top + (viewH-thH) * g_ctrlScroll / g_ctrlMax;
+    g_can.fillSmoothRoundRect(W-6,thY,3,thH,1,BRASS);
+  }
+  keys({
+    { "BACK",  []{ g_scr=Screen::Home;     g_ctrlScroll=0; g_dirty=true; } },
+    { "SETUP", []{ g_scr=Screen::Settings; g_ctrlScroll=0; g_dirty=true; } },
+  });
 }
 
 // ── SETTINGS ─────────────────────────────────────────────────────────────────
@@ -433,6 +527,7 @@ static void render(){
     case Screen::Brewing:  renderBrewing(s);  break;
     case Screen::Controls: renderControls(s); break;
     case Screen::Settings: renderSettings();  break;
+    case Screen::Stats:    renderStats(s);    break;
   }
   g_can.pushSprite(0,0);
 }
@@ -452,6 +547,8 @@ void begin(){
   AA_NUM_MD  .load(vlw_num_md,   sizeof vlw_num_md);
   lmcloud::onChange([]{ g_dirty=true; });
 }
+
+void forceSetup(){ g_scr=Screen::Settings; g_dirty=true; }
 
 void splash(const char* line){
   g_can.fillScreen(IVORY);
@@ -495,7 +592,7 @@ void debugScreen(int n,float arg){
 void tick(){
   M5.update();
   auto t=M5.Touch.getDetail();
-  bool scrollable = (g_scr==Screen::Controls);
+  bool scrollable = (g_scr==Screen::Controls || g_scr==Screen::Stats);
 
   if (t.wasPressed()){
     g_dragging=false; g_dragStartY=t.y; g_dragStartScroll=g_ctrlScroll;
