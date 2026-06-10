@@ -1,27 +1,24 @@
 # Strumento
 
-**The missing display for La Marzocco espresso machines:**
+**The display I always wanted for La Marzocco espresso machines.**
 
-The main screen is an analog boiler-temp dial; pull the paddle and the whole
-display turns into a shot timer. Touch controls cover the rest (power, steam,
+A beautiful little device that adds an analog boiler-temp dial, shot timer,
+and easy-to-reach controls for all your machines settings (power, steam,
 pre-brew, backflush). 
 
-### → [Flash it from your browser](https://felixrieseberg.github.io/strumento/)
+To make your own, you just need a ~$50 device and a USB-C cable. You can
+install this software directly [from your browser](https://felixrieseberg.github.io/strumento/)
 
----
+## Making your own
 
-## What to buy
+First, buy some ESP32 hardware. I've used the $50 [M5Stack Core2](https://shop.m5stack.com/products/m5stack-core2-esp32-iot-development-kit) but you could probably use plenty of other
+devices.
 
-| | |
-|---|---|
-| **[M5Stack Core2](https://shop.m5stack.com/products/m5stack-core2-esp32-iot-development-kit)** | About $50. The v1.1 works too. |
-| **USB-C cable** | One that carries data, not a charge-only cable. |
-
-That's it. You also need the **La Marzocco app account** you already have (the
+You also need the **La Marzocco app account** you already have (the
 email/password you use in the official app, with your machine paired) and a
 desktop running **Chrome or Edge** for the web installer.
 
-## Install
+### Install
 
 1. Plug the Core2 into your computer over USB-C.
 2. Open the **[web installer](https://felixrieseberg.github.io/strumento/)** in
@@ -31,14 +28,14 @@ desktop running **Chrome or Edge** for the web installer.
 
 (Want to build it yourself? See [BUILDING.md](BUILDING.md).)
 
-## First boot
+### First boot
 
 The device will land on the Setup screen. Tap each row and type your **WiFi**
 name + password, then your **La Marzocco** email + password. Leave the serial
 blank to auto-discover. Tap **Reconnect** and you're done — the boiler dial
 goes live within a few seconds, and pulling the paddle flips to the shot timer.
 
-Credentials are stored on the device and survive re-flashing.
+Credentials are stored on the device.
 
 ## Supported machines
 
