@@ -33,6 +33,11 @@ static inline uint16_t FG()    { return g_dark?LUME    :INK;      }
 static inline uint16_t FACE()  { return g_dark?NIGHT   :PAPER;    }
 void setDark(bool d){ g_dark=d; }
 
+// ── temperature unit ────────────────────────────────────────────────────────
+static inline float c2disp(float c){ return settings.fahrenheit?c*1.8f+32.f:c; }
+static inline float disp2c(float d){ return settings.fahrenheit?(d-32.f)/1.8f:d; }
+static inline float tempStep()     { return settings.fahrenheit?1.f:0.5f; }
+
 // VLW handles parsed once at boot — switching is then a pointer swap.
 struct AAFont {
   lgfx::PointerWrapper data;
@@ -235,7 +240,7 @@ static void homeDial(const lmcloud::State& s,bool on,float temp,
     float a=(135+270*frac)*DEG_TO_RAD;
     g_can.drawWedgeLine(cx+cosf(a)*(r-22),cy+sinf(a)*(r-22),
                         cx+cosf(a)*(r-6), cy+sinf(a)*(r-6), 1.5f,0.5f, LM_RED);
-    char tbuf[8]; snprintf(tbuf,sizeof tbuf,"%.0f",temp);
+    char tbuf[8]; snprintf(tbuf,sizeof tbuf,"%.0f",c2disp(temp));
     g_can.setFont(&F_NUM_LG); g_can.setTextColor(FG());
     g_can.setTextDatum(middle_center);
     int tw=g_can.textWidth(tbuf);
@@ -431,7 +436,9 @@ static void renderControls(const lmcloud::State& s){
     stepRow(y,"STEAM LEVEL",(float)s.steamLevel,1,
             [](float v){ lmcloud::setSteamLevel((uint8_t)constrain(v,1.f,3.f)); },"%.0f"); y+=40;
   }
-  stepRow  (y,"BREW TEMP",   t,  s.coffeeTempStep,[](float v){lmcloud::setCoffeeTemp(v);}); y+=40;
+  stepRow  (y,"BREW TEMP", c2disp(t), tempStep(),
+            [](float v){lmcloud::setCoffeeTemp(disp2c(v));},
+            settings.fahrenheit?"%.0f":"%.1f");                                 y+=40;
   if (pmAvail){
     const char* pmLabel = pm==lmcloud::PreMode::PreBrewing  ? "PREBREW"
                         : pm==lmcloud::PreMode::PreInfusion ? "PREINFUSE" : "DISABLED";
@@ -569,6 +576,9 @@ static void renderSettings(){
   toggleRow(y,"DARK MODE",settings.darkMode,[]{
     settings.darkMode=!settings.darkMode; settings.save();
     g_dark=settings.darkMode; g_dirty=true;
+  }); y+=40;
+  toggleRow(y,"FAHRENHEIT",settings.fahrenheit,[]{
+    settings.fahrenheit=!settings.fahrenheit; settings.save(); g_dirty=true;
   }); y+=40;
 
   g_can.clearClipRect();

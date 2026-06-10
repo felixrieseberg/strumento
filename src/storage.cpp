@@ -10,7 +10,8 @@ void Settings::load() {
   lmUser   = p_.getString("lu", cfg::DEF_LM_USER);
   lmPass   = p_.getString("lp", cfg::DEF_LM_PASS);
   lmSerial = p_.getString("ls", cfg::DEF_LM_SERIAL);
-  darkMode = p_.getBool  ("dm", false);
+  darkMode   = p_.getBool("dm", false);
+  fahrenheit = p_.getBool("fh", false);
   instId   = p_.getString("iid", "");
   size_t n = p_.getBytes("epk", ecPriv, sizeof ecPriv);
   ecPrivValid = (n == sizeof ecPriv);
@@ -25,6 +26,7 @@ void Settings::save() {
   p_.putString("lp", lmPass);
   p_.putString("ls", lmSerial);
   p_.putBool  ("dm", darkMode);
+  p_.putBool  ("fh", fahrenheit);
   p_.putString("iid", instId);
   if (ecPrivValid) p_.putBytes("epk", ecPriv, sizeof ecPriv);
   p_.end();
