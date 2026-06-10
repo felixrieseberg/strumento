@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build
+        run: pio run
+
+      - name: Merge flash image
+        run: |
+          python -m esptool --chip esp32 merge_bin \
+            -o strumento-m5core2.bin \
+            --flash_mode dio --flash_size 16MB \
+            0x1000  .pio/build/m5core2/bootloader.bin \
+            0x8000  .pio/build/m5core2/partitions.bin \
+            0x10000 .pio/build/m5core2/firmware.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strumento-m5core2
+          path: strumento-m5core2.bin
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: strumento-m5core2.bin

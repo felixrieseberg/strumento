@@ -1,0 +1,13 @@
+{
+  "name": "Strumento",
+  "version": "1.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "strumento-m5core2.bin", "offset": 0 }
+      ]
+    }
+  ]
+}
