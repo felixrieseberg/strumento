@@ -8,6 +8,7 @@ namespace lmcloud {
 enum class Net : uint8_t { Down, WifiUp, AuthOk, WsLive };
 enum class MachineStatus : uint8_t { Unknown, Off, StandBy, PoweredOn, Brewing };
 enum class BoilerStatus  : uint8_t { Unknown, Off, StandBy, HeatingUp, Ready, NoWater };
+enum class PreMode       : uint8_t { Disabled, PreBrewing, PreInfusion };
 
 struct WakeSched {
   String  id;
@@ -24,12 +25,20 @@ struct State {
   // coffee boiler
   BoilerStatus  coffeeStatus = BoilerStatus::Unknown;
   float         coffeeTarget = 0;
+  float         coffeeTempMin = 80, coffeeTempMax = 100, coffeeTempStep = 0.5;
   // steam boiler
   BoilerStatus  steamStatus  = BoilerStatus::Unknown;
   bool          steamEnabled = false;
-  // pre-brew
+  bool          steamLevelSupported = false;       // CMSteamBoilerLevel widget present
+  uint8_t       steamLevel   = 0;                  // 0=n/a, 1..3
+  bool          steamTempSupported = false;        // CMSteamBoilerTemperature.targetTemperatureSupported
+  float         steamTarget  = 0;
+  // pre-brew / pre-infusion
   bool          preBrewOn    = false;
+  PreMode       preMode      = PreMode::Disabled;
+  uint8_t       preModesAvail = 0;                 // bit0=PreBrewing, bit1=PreInfusion
   float         preBrewIn    = 0, preBrewOut = 0;
+  String        preDoseIndex = "ByGroup";
   // shot timer
   int64_t       brewingStartMs = 0;              // server epoch ms; 0 = not brewing
   float         lastShotSec    = 0;
@@ -60,8 +69,10 @@ void onChange(std::function<void()> cb);
 // Commands (fire-and-forget; state updates arrive via WS)
 bool setPower(bool on);
 bool setSteam(bool on);
+bool setSteamLevel(uint8_t lvl);
 bool setCoffeeTemp(float c);
-bool setPreBrew(bool on);
+bool setPreMode(PreMode m);
+bool setPreBrew(bool on);                 // compat wrapper → setPreMode
 bool setPreBrewTimes(float secIn, float secOut);
 bool setSmartStandby(bool enabled, int minutes, bool afterLastBrew);
 bool startBackflush();

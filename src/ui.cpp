@@ -188,7 +188,8 @@ static void header(const lmcloud::State& s, bool forceDark=false) {
   // wordmark in serif italic — closest to the etched logo on the grouphead
   g_can.setFont(&F_WORDMARK);
   g_can.setTextColor(dark?LUME:INK); g_can.setTextDatum(middle_center);
-  String wm="linea mini";
+  String wm = s.modelName.isEmpty() ? "strumento" : s.modelName;
+  wm.toLowerCase();
   int ww = g_can.textWidth(wm);
   g_can.fillRect(W/2-ww/2-8,10,ww+16,20,bg);
   g_can.drawString(wm, W/2, 19);
@@ -230,13 +231,14 @@ static void renderHome(const lmcloud::State& s){
 
   // ── main dial ──
   const int cx=W/2, cy=108, r=70;
+  float range = s.coffeeTempMax - s.coffeeTempMin;
   bezel(cx,cy,r,FACE());
-  ticks(cx,cy,r, 40,10, 135,270, INK_40,FG());         // 80–100°C, 270° sweep
+  ticks(cx,cy,r, (int)(range*2),(int)(range/2), 135,270, INK_40,FG());
   g_can.fillRect(cx-1, cy-r+2, 3, 8, LM_RED);          // 12-o'clock red index
 
   if (on && temp>0){
     // hand first (behind text), short — points at the rim only
-    float frac=constrain((temp-80.f)/20.f,0.f,1.f);
+    float frac=constrain((temp-s.coffeeTempMin)/range,0.f,1.f);
     float a=(135+270*frac)*DEG_TO_RAD;
     g_can.drawWedgeLine(cx+cosf(a)*(r-22),cy+sinf(a)*(r-22),
                         cx+cosf(a)*(r-6), cy+sinf(a)*(r-6), 1.5f,0.5f, LM_RED);
@@ -390,18 +392,38 @@ static void cycleRow(int y,const char* label,const char* val,std::function<void(
 static void renderControls(const lmcloud::State& s){
   g_can.fillScreen(BG()); vignette(); g_btns.clear();
 
-  bool steamOn=s.steamEnabled, preOn=s.preBrewOn;
+  bool steamOn=s.steamEnabled;
   bool sbEn=s.sbEnabled, sbAfter=s.sbAfterBrew; int sbMin=s.sbMinutes;
   float t=s.coffeeTarget, pin=s.preBrewIn, pout=s.preBrewOut;
+  auto  pm=s.preMode; uint8_t pmAvail=s.preModesAvail;
   const int top=54, viewH=KEY_Y-top;
   int y = top - g_ctrlScroll;
 
   g_can.setClipRect(0,top,W,viewH);
   toggleRow(y,"STEAM BOILER",steamOn,[steamOn]{ lmcloud::setSteam(!steamOn);}); y+=40;
-  stepRow  (y,"BREW TEMP",   t,  0.5f,[](float v){lmcloud::setCoffeeTemp(v);}); y+=40;
-  toggleRow(y,"PRE-INFUSION",preOn,[preOn]{ lmcloud::setPreBrew(!preOn);});     y+=40;
-  stepRow  (y,"  PRE  IN  s",pin, 0.5f,[pout](float v){lmcloud::setPreBrewTimes(v,pout);}); y+=40;
-  stepRow  (y,"  PRE OUT s", pout,0.5f,[pin](float v){lmcloud::setPreBrewTimes(pin,v);});  y+=40;
+  if (s.steamLevelSupported){
+    stepRow(y,"STEAM LEVEL",(float)s.steamLevel,1,
+            [](float v){ lmcloud::setSteamLevel((uint8_t)constrain(v,1.f,3.f)); },"%.0f"); y+=40;
+  }
+  stepRow  (y,"BREW TEMP",   t,  s.coffeeTempStep,[](float v){lmcloud::setCoffeeTemp(v);}); y+=40;
+  if (pmAvail){
+    const char* pmLabel = pm==lmcloud::PreMode::PreBrewing  ? "PREBREW"
+                        : pm==lmcloud::PreMode::PreInfusion ? "PREINFUSE" : "DISABLED";
+    cycleRow(y,"PRE-EXTRACTION",pmLabel,[pm,pmAvail]{
+      lmcloud::PreMode m=pm;
+      for(int k=0;k<3;++k){
+        m=(lmcloud::PreMode)(((uint8_t)m+1)%3);
+        if(m==lmcloud::PreMode::Disabled) break;
+        if(m==lmcloud::PreMode::PreBrewing  && (pmAvail&1)) break;
+        if(m==lmcloud::PreMode::PreInfusion && (pmAvail&2)) break;
+      }
+      lmcloud::setPreMode(m);
+    }); y+=40;
+    if (pm!=lmcloud::PreMode::Disabled){
+      stepRow(y,"  PRE  IN  s",pin, 0.5f,[pout](float v){lmcloud::setPreBrewTimes(v,pout);}); y+=40;
+      stepRow(y,"  PRE OUT s", pout,0.5f,[pin](float v){lmcloud::setPreBrewTimes(pin,v);});  y+=40;
+    }
+  }
   // backflush — guarded
   tracked(18,y+18,"BACKFLUSH",2,LM_RED,&F_LABEL,middle_left);
   g_can.fillSmoothRoundRect(W-18-90,y+6,90,24,12,LM_RED);

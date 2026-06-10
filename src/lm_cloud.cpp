@@ -25,8 +25,8 @@ static uint32_t              g_nextPoll = 0, g_nextSlowPoll = 0,
                              g_nextWifiTry = 0, g_nextWsTry = 0;
 
 // cross-task command queue (UI → cloud task)
-enum class Cmd : uint8_t { None, Power, Steam, CoffeeTemp, PreBrew, PreBrewTimes,
-                           SmartStandby, Backflush, Reconnect };
+enum class Cmd : uint8_t { None, Power, Steam, SteamLevel, CoffeeTemp, PreMode,
+                           PreBrewTimes, SmartStandby, Backflush, Reconnect };
 struct QItem { Cmd c; float f, f2; bool b; };
 static QueueHandle_t g_q;
 
@@ -56,6 +56,17 @@ static BoilerStatus parseBoiler(const char* s) {
   if (!strcmp(s,"Off"))       return BoilerStatus::Off;
   return BoilerStatus::Unknown;
 }
+static PreMode parsePreMode(const char* s) {
+  if (!s) return PreMode::Disabled;
+  if (!strcmp(s,"PreBrewing"))  return PreMode::PreBrewing;
+  if (!strcmp(s,"PreInfusion")) return PreMode::PreInfusion;
+  return PreMode::Disabled;
+}
+static const char* preModeStr(PreMode m) {
+  switch (m) { case PreMode::PreBrewing:  return "PreBrewing";
+               case PreMode::PreInfusion: return "PreInfusion";
+               default:                   return "Disabled"; }
+}
 
 static void applyWidgets(JsonArrayConst widgets) {
   for (JsonObjectConst w : widgets) {
@@ -75,21 +86,43 @@ static void applyWidgets(JsonArrayConst widgets) {
       g_state.nextStandbyMs = (!ns.isNull() && !ns["startTime"].isNull())
                               ? (uint64_t)(ns["startTime"].as<double>()) : 0;
     } else if (!strcmp(code, "CMCoffeeBoiler")) {
-      g_state.coffeeStatus = parseBoiler(o["status"] | "");
-      g_state.coffeeTarget = o["targetTemperature"] | g_state.coffeeTarget;
+      g_state.coffeeStatus   = parseBoiler(o["status"] | "");
+      g_state.coffeeTarget   = o["targetTemperature"]     | g_state.coffeeTarget;
+      g_state.coffeeTempMin  = o["targetTemperatureMin"]  | g_state.coffeeTempMin;
+      g_state.coffeeTempMax  = o["targetTemperatureMax"]  | g_state.coffeeTempMax;
+      g_state.coffeeTempStep = o["targetTemperatureStep"] | g_state.coffeeTempStep;
     } else if (!strcmp(code, "CMSteamBoilerTemperature")) {
-      g_state.steamStatus  = parseBoiler(o["status"] | "");
-      g_state.steamEnabled = o["enabled"] | false;
+      g_state.steamStatus        = parseBoiler(o["status"] | "");
+      g_state.steamEnabled       = o["enabled"] | false;
+      g_state.steamTempSupported = o["targetTemperatureSupported"] | g_state.steamTempSupported;
+      g_state.steamTarget        = o["targetTemperature"] | g_state.steamTarget;
+    } else if (!strcmp(code, "CMSteamBoilerLevel")) {
+      g_state.steamStatus         = parseBoiler(o["status"] | "");
+      g_state.steamEnabled        = o["enabled"] | false;
+      g_state.steamLevelSupported = true;
+      const char* lv = o["targetLevel"] | "";
+      if (!strncmp(lv,"Level",5) && lv[5]>='1' && lv[5]<='3') g_state.steamLevel = lv[5]-'0';
     } else if (!strcmp(code, "CMBackFlush")) {
       if (!o["lastCleaningStartTime"].isNull())
         g_state.lastCleanMs = (int64_t)(o["lastCleaningStartTime"].as<double>());
     } else if (!strcmp(code, "CMPreBrewing")) {
-      const char* m = o["mode"] | "Disabled";
-      g_state.preBrewOn = strcmp(m, "Disabled") != 0;
-      JsonArrayConst t = o["times"]["PreBrewing"];
+      g_state.preMode   = parsePreMode(o["mode"] | "Disabled");
+      g_state.preBrewOn = (g_state.preMode != PreMode::Disabled);
+      g_state.preModesAvail = 0;
+      for (JsonVariantConst v : o["availableModes"].as<JsonArrayConst>()) {
+        const char* ms = v | "";
+        if (!strcmp(ms,"PreBrewing"))  g_state.preModesAvail |= 1;
+        if (!strcmp(ms,"PreInfusion")) g_state.preModesAvail |= 2;
+      }
+      // times: prefer the array keyed by the active mode, else whichever exists
+      const char* key = (g_state.preMode==PreMode::PreInfusion) ? "PreInfusion" : "PreBrewing";
+      JsonArrayConst t = o["times"][key];
+      if (t.isNull()) t = o["times"]["PreBrewing"];
+      if (t.isNull()) t = o["times"]["PreInfusion"];
       if (!t.isNull() && t.size() > 0) {
-        g_state.preBrewIn  = t[0]["seconds"]["In"]  | g_state.preBrewIn;
-        g_state.preBrewOut = t[0]["seconds"]["Out"] | g_state.preBrewOut;
+        g_state.preBrewIn    = t[0]["seconds"]["In"]  | g_state.preBrewIn;
+        g_state.preBrewOut   = t[0]["seconds"]["Out"] | g_state.preBrewOut;
+        g_state.preDoseIndex = t[0]["doseIndex"] | g_state.preDoseIndex.c_str();
       }
     }
   }
@@ -274,8 +307,17 @@ bool setCoffeeTemp(float c) {
   g_state.coffeeTarget=roundf(c*10)/10; changed();
   enq(Cmd::CoffeeTemp,0,c); return true;
 }
+bool setSteamLevel(uint8_t lvl) {
+  lvl = constrain(lvl,(uint8_t)1,(uint8_t)3);
+  g_state.steamLevel=lvl; changed();
+  enq(Cmd::SteamLevel,false,(float)lvl); return true;
+}
+bool setPreMode(PreMode m) {
+  g_state.preMode=m; g_state.preBrewOn=(m!=PreMode::Disabled);
+  changed(); enq(Cmd::PreMode,false,(float)(uint8_t)m); return true;
+}
 bool setPreBrew(bool on) {
-  g_state.preBrewOn=on; changed(); enq(Cmd::PreBrew,on); return true;
+  return setPreMode(on?PreMode::PreBrewing:PreMode::Disabled);
 }
 bool setPreBrewTimes(float in,float out){
   in =constrain(roundf(in *10)/10, 1.f,9.f);
@@ -298,13 +340,18 @@ static void execCmd(const QItem& i){
                           sendCommand("CoffeeMachineChangeMode",b); break;
     case Cmd::Steam:      b["boilerIndex"]=1; b["enabled"]=i.b;
                           sendCommand("CoffeeMachineSettingSteamBoilerEnabled",b); break;
+    case Cmd::SteamLevel:{
+      char lv[8]; snprintf(lv,sizeof lv,"Level%d",(int)i.f);
+      b["boilerIndex"]=1; b["targetLevel"]=lv;
+      sendCommand("CoffeeMachineSettingSteamBoilerTargetLevel",b); break;
+    }
     case Cmd::CoffeeTemp: b["boilerIndex"]=1; b["targetTemperature"]=roundf(i.f*10)/10;
                           sendCommand("CoffeeMachineSettingCoffeeBoilerTargetTemperature",b); break;
-    case Cmd::PreBrew:    b["mode"]=i.b?"PreBrewing":"Disabled";
+    case Cmd::PreMode:    b["mode"]=preModeStr((PreMode)(uint8_t)i.f);
                           sendCommand("CoffeeMachinePreBrewingChangeMode",b); break;
     case Cmd::PreBrewTimes:{
       auto t=b["times"].to<JsonObject>(); t["In"]=i.f; t["Out"]=i.f2;
-      b["groupIndex"]=1; b["doseIndex"]="ByGroup";
+      b["groupIndex"]=1; b["doseIndex"]=g_state.preDoseIndex;
       sendCommand("CoffeeMachinePreBrewingSettingTimes",b); break;
     }
     case Cmd::SmartStandby:

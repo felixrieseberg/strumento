@@ -10,6 +10,18 @@ backflush controls. No Home Assistant, no BLE pairing, no proxy box.
 
 ---
 
+## Supported machines
+
+| Machine | Status |
+|---|---|
+| Linea Mini | Fully tested |
+| Linea Mini R | Expected to work (same widgets + steam-level) |
+| Linea Micra | Expected to work (steam-level, tri-state pre-extraction) |
+| GS3 AV | Expected to work (110°C scale, per-dose pre-brew shows DoseA) |
+| GS3 MP | Likely works (untested; no pre-brew) |
+
+Strumento gates every control on the capability flags the machine itself reports, so any model the official app supports should work — open an issue with your model if something's off.
+
 ## Hardware
 
 | | |
