@@ -58,6 +58,8 @@ static bool     g_dirty = true;
 static M5Canvas g_can(&M5.Display);
 static uint32_t g_lastFrame = 0;
 static float    g_shotHold = 0;       // seconds shown briefly after brew ends
+static uint32_t g_shotHoldUntil = 0;  // millis() deadline for the post-shot freeze
+static constexpr uint32_t SHOT_HOLD_MS = 4000;
 static float    g_dbgBrewSec = -1;    // <0 = live; ≥0 = forced brewing seconds
 static bool     g_dbgOn      = false; // force "machine on" view on Home
 static int      g_ctrlScroll = 0;     // px offset into Controls content
@@ -460,12 +462,20 @@ static void renderControls(const lmcloud::State& s){
       stepRow(y,"  PRE OUT s", pout,0.5f,[pin](float v){lmcloud::setPreBrewTimes(pin,v);});  y+=40;
     }
   }
-  // backflush — guarded
+  // backflush — the cloud only *arms* cleaning; the machine then waits for the
+  // user to move the brew paddle. Reflect that state so a tap isn't a silent
+  // no-op: START → MOVE PADDLE (armed) → CLEANING.
   tracked(18,y+18,"BACKFLUSH",2,LM_RED,&F_LABEL,middle_left);
-  g_can.fillSmoothRoundRect(W-18-90,y+6,90,24,12,LM_RED);
-  g_can.fillSmoothRoundRect(W-18-89,y+7,88,22,11,BG());
-  tracked(W-18-45,y+18,"START",2,LM_RED,&F_LABEL,middle_center);
-  g_btns.push_back({W-18-90,y+6,90,24,[]{ lmcloud::startBackflush(); }});       y+=40;
+  if (s.backflush==lmcloud::BackflushStatus::Requested){
+    tracked(W-18,y+18,"MOVE PADDLE",1,LM_RED,&F_LABEL_SM,middle_right);
+  } else if (s.backflush==lmcloud::BackflushStatus::Cleaning){
+    tracked(W-18,y+18,"CLEANING",2,LM_RED,&F_LABEL,middle_right);
+  } else {
+    g_can.fillSmoothRoundRect(W-18-90,y+6,90,24,12,LM_RED);
+    g_can.fillSmoothRoundRect(W-18-89,y+7,88,22,11,BG());
+    tracked(W-18-45,y+18,"START",2,LM_RED,&F_LABEL,middle_center);
+  }
+  g_btns.push_back({W-18-100,y+2,118,32,[]{ lmcloud::startBackflush(); }});      y+=40;
   // smart standby
   toggleRow(y,"SMART STANDBY",sbEn,[=]{ lmcloud::setSmartStandby(!sbEn,sbMin,sbAfter);}); y+=40;
   stepRow  (y,"  STANDBY MIN",(float)sbMin,5,
@@ -609,10 +619,19 @@ static void render(){
   lmcloud::lockState();
   auto& s=lmcloud::state();
   if (g_dbgBrewSec>=0){ /* debug: honour g_scr as set */ }
-  else if (s.machine==lmcloud::MachineStatus::Brewing && g_scr!=Screen::Settings)
-    g_scr=Screen::Brewing;
-  else if (g_scr==Screen::Brewing && s.machine!=lmcloud::MachineStatus::Brewing){
-    g_shotHold=s.lastShotSec; g_scr=Screen::Home;
+  else if (s.machine==lmcloud::MachineStatus::Brewing && g_scr!=Screen::Settings){
+    g_scr=Screen::Brewing; g_shotHoldUntil=0;        // live brew — cancel any freeze
+  }
+  else if (g_scr==Screen::Brewing){
+    // Brew ended. The cloud reports the stop a beat after the paddle drops, so
+    // the live count (device clock − server brew-start) has already overshot the
+    // real pour. Snap the dial to LM's authoritative extractionSeconds and hold
+    // it on screen briefly, so the last number shown is the machine's own
+    // measurement — not the latency-inflated live value.
+    if (g_shotHoldUntil==0 && s.lastShotSec>0){
+      g_shotHold=s.lastShotSec; g_shotHoldUntil=millis()+SHOT_HOLD_MS;
+    }
+    if (g_shotHoldUntil==0 || millis()>=g_shotHoldUntil){ g_shotHoldUntil=0; g_scr=Screen::Home; }
   }
   switch(g_scr){
     case Screen::Home:     renderHome(s);     break;
