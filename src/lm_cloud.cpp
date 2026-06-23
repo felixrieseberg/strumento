@@ -78,6 +78,16 @@ static const char* preModeStr(PreMode m) {
                case PreMode::PreInfusion: return "PreInfusion";
                default:                   return "Disabled"; }
 }
+static BackflushStatus parseBackflush(const char* s) {
+  if (!s) return BackflushStatus::Off;
+  if (!strcmp(s,"Requested")) return BackflushStatus::Requested;
+  if (!strcmp(s,"Cleaning"))  return BackflushStatus::Cleaning;
+  return BackflushStatus::Off;
+}
+// Set when the user arms backflush, so a stale "Off" dashboard frame that was
+// in flight before the command landed can't immediately clear the optimistic
+// "Requested" state. Written by UI thread, read by cloud thread (32-bit atomic).
+static volatile uint32_t g_bfHoldUntil = 0;
 
 static bool pending(Cmd c);   // fwd — defined in debounce section
 
@@ -120,6 +130,10 @@ static void applyWidgets(JsonArrayConst widgets) {
     } else if (!strcmp(code, "CMBackFlush")) {
       if (!o["lastCleaningStartTime"].isNull())
         g_state.lastCleanMs = (int64_t)(o["lastCleaningStartTime"].as<double>());
+      BackflushStatus bs = parseBackflush(o["status"] | "Off");
+      // Don't let a stale "Off" stomp the just-armed optimistic "Requested".
+      if (!(bs == BackflushStatus::Off && millis() < g_bfHoldUntil))
+        g_state.backflush = bs;
     } else if (!strcmp(code, "CMPreBrewing")) {
       if (!pending(Cmd::PreMode))
         g_state.preMode = parsePreMode(o["mode"] | "Disabled");
@@ -377,7 +391,11 @@ bool setSmartStandby(bool en,int min,bool afterBrew){
   g_state.sbEnabled=en; g_state.sbMinutes=min; g_state.sbAfterBrew=afterBrew;
   changed(); enqDebounced(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
 }
-bool startBackflush()       { enq(Cmd::Backflush);     return true; }
+bool startBackflush() {
+  { StateLock _l; g_state.backflush = BackflushStatus::Requested; }
+  g_bfHoldUntil = millis() + 2500;   // bridge the optimistic→cloud-confirm gap
+  changed(); enq(Cmd::Backflush); return true;
+}
 void reconnect()            { g_wantReconnect = true; }
 void uiTick()               { flushDebounced(); }
 

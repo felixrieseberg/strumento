@@ -9,6 +9,9 @@ enum class Net : uint8_t { Down, WifiUp, AuthOk, WsLive };
 enum class MachineStatus : uint8_t { Unknown, Off, StandBy, PoweredOn, Brewing };
 enum class BoilerStatus  : uint8_t { Unknown, Off, StandBy, HeatingUp, Ready, NoWater };
 enum class PreMode       : uint8_t { Disabled, PreBrewing, PreInfusion };
+// CMBackFlush.status — cloud only *arms* cleaning (Requested); the user must
+// then move the brew paddle to actually run it (Cleaning), or it reverts to Off.
+enum class BackflushStatus : uint8_t { Off, Requested, Cleaning };
 
 struct WakeSched {
   String  id;
@@ -52,6 +55,7 @@ struct State {
   int           wifiRssi     = 0;
   int           totalCoffee  = 0, totalFlush = 0;
   int64_t       lastCleanMs  = 0;                // CMBackFlush.lastCleaningStartTime
+  BackflushStatus backflush  = BackflushStatus::Off;
   std::vector<Firmware>  firmwares;
   std::vector<WakeSched> schedules;
   // misc
