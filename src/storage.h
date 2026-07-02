@@ -8,6 +8,7 @@ struct Settings {
   String lmUser, lmPass, lmSerial;
   bool   darkMode   = false;
   bool   fahrenheit = false;
+  uint8_t timeZoneIndex = cfg::DEF_TIME_ZONE_INDEX;
   // crypto material — generated once, never shown
   String  instId;          // lowercase uuid
   uint8_t ecPriv[32];      // P-256 private scalar (raw big-endian)

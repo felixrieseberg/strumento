@@ -537,7 +537,7 @@ static bool ensureWifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 12000) delay(100);
   if (WiFi.status() != WL_CONNECTED) { g_nextWifiTry = millis() + 8000; return false; }
   Serial.printf("[wifi] up %s\n", WiFi.localIP().toString().c_str());
-  configTzTime(cfg::TZ_POSIX, cfg::NTP_POOL);
+  configTzTime(cfg::timeZoneChoice(settings.timeZoneIndex).posix, cfg::NTP_POOL);
   // wait briefly for SNTP — request signing needs sane epoch
   for (int i=0; i<40 && time(nullptr) < 1600000000; ++i) delay(250);
   setNet(Net::WifiUp, WiFi.localIP().toString());

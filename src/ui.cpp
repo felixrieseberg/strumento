@@ -93,6 +93,10 @@ static String ago(int64_t atMs) {
 }
 static String hhmm(int min){ char b[8]; snprintf(b,sizeof b,"%02d:%02d",min/60,min%60); return b; }
 
+static void applyTimeZone() {
+  configTzTime(cfg::timeZoneChoice(settings.timeZoneIndex).posix, cfg::NTP_POOL);
+}
+
 // Letterspaced small-caps. M5GFX has no tracking, so draw glyph-by-glyph.
 static int tracked(int x, int y, const char* s, int track,
                    uint16_t col, const lgfx::IFont* f, lgfx::textdatum_t d=top_left) {
@@ -593,7 +597,12 @@ static void renderSettings(){
   toggleRow(y,"FAHRENHEIT",settings.fahrenheit,[]{
     settings.fahrenheit=!settings.fahrenheit; settings.save(); g_dirty=true;
   }); y+=40;
-
+  settingRow(y,"timezone", cfg::timeZoneChoice(settings.timeZoneIndex).label, false, []{
+    settings.timeZoneIndex = (settings.timeZoneIndex + 1) % cfg::TIME_ZONE_COUNT;
+    settings.save();
+    applyTimeZone();
+    g_dirty=true;
+  }); y+=36;
   g_can.clearClipRect();
   int contentH = y - (top - g_ctrlScroll);
   g_ctrlMax = max(0, contentH - viewH);
