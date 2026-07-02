@@ -7,6 +7,12 @@ steam, pre-brew, backflush). To make your own, you just need a ~$50 device and
 a USB-C cable. You can then install this firmware directly
 [from your browser](https://felixrieseberg.github.io/strumento/).
 
+<p>
+  <a href="https://felixrieseberg.github.io/strumento/"><img src="web/img/timer.jpg" alt="Strumento showing the shot timer" width="31%"></a>
+  <a href="https://felixrieseberg.github.io/strumento/"><img src="web/img/ready.jpg" alt="Strumento showing the boiler dial" width="31%"></a>
+  <a href="https://felixrieseberg.github.io/strumento/"><img src="web/img/settings.jpg" alt="Strumento showing machine settings" width="31%"></a>
+</p>
+
 ## Making your own
 
 I built this on a $50
