@@ -101,4 +101,20 @@ constexpr uint32_t POLL_DASHBOARD_MS = 30000;   // REST fallback when WS quiet
 constexpr uint32_t POLL_SLOW_MS      = 300000;  // scheduling/settings/stats
 constexpr uint32_t TOKEN_REFRESH_SLOP_S = 600;  // refresh 10 min before expiry
 
+struct ShotHoldChoice {
+  uint16_t seconds;   // 0 = until tap
+  const char* label;
+};
+inline constexpr ShotHoldChoice SHOT_HOLDS[] = {
+  { 4,  "4s" },
+  { 10, "10s" },
+  { 30, "30s" },
+  { 0,  "tap" },
+};
+constexpr uint8_t SHOT_HOLD_COUNT = sizeof(SHOT_HOLDS) / sizeof(SHOT_HOLDS[0]);
+constexpr uint8_t DEF_SHOT_HOLD_INDEX = 0;
+inline const ShotHoldChoice& shotHoldChoice(uint8_t idx) {
+  return SHOT_HOLDS[idx < SHOT_HOLD_COUNT ? idx : DEF_SHOT_HOLD_INDEX];
+}
+
 }  // namespace cfg

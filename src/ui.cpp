@@ -59,7 +59,7 @@ static M5Canvas g_can(&M5.Display);
 static uint32_t g_lastFrame = 0;
 static float    g_shotHold = 0;       // seconds shown briefly after brew ends
 static uint32_t g_shotHoldUntil = 0;  // millis() deadline for the post-shot freeze
-static constexpr uint32_t SHOT_HOLD_MS = 4000;
+static constexpr uint32_t SHOT_HOLD_UNTIL_TAP = UINT32_MAX;
 static float    g_dbgBrewSec = -1;    // <0 = live; ≥0 = forced brewing seconds
 static bool     g_dbgOn      = false; // force "machine on" view on Home
 static int      g_ctrlScroll = 0;     // px offset into Controls content
@@ -603,6 +603,12 @@ static void renderSettings(){
     applyTimeZone();
     g_dirty=true;
   }); y+=36;
+  settingRow(y,"shot hold", cfg::shotHoldChoice(settings.shotHoldIndex).label, false, []{
+    settings.shotHoldIndex = (settings.shotHoldIndex + 1) % cfg::SHOT_HOLD_COUNT;
+    settings.save();
+    g_dirty=true;
+  }); y+=36;
+
   g_can.clearClipRect();
   int contentH = y - (top - g_ctrlScroll);
   g_ctrlMax = max(0, contentH - viewH);
@@ -638,9 +644,14 @@ static void render(){
     // it on screen briefly, so the last number shown is the machine's own
     // measurement — not the latency-inflated live value.
     if (g_shotHoldUntil==0 && s.lastShotSec>0){
-      g_shotHold=s.lastShotSec; g_shotHoldUntil=millis()+SHOT_HOLD_MS;
+      const auto& hold = cfg::shotHoldChoice(settings.shotHoldIndex);
+      g_shotHold=s.lastShotSec;
+      g_shotHoldUntil = hold.seconds ? millis() + hold.seconds * 1000UL : SHOT_HOLD_UNTIL_TAP;
     }
-    if (g_shotHoldUntil==0 || millis()>=g_shotHoldUntil){ g_shotHoldUntil=0; g_scr=Screen::Home; }
+    if (g_shotHoldUntil==0 ||
+        (g_shotHoldUntil!=SHOT_HOLD_UNTIL_TAP && millis()>=g_shotHoldUntil)){
+      g_shotHoldUntil=0; g_scr=Screen::Home;
+    }
   }
   switch(g_scr){
     case Screen::Home:     renderHome(s);     break;
@@ -741,6 +752,9 @@ void tick(){
     }
   }
   if (t.wasReleased() && !g_dragging){
+    if (g_scr==Screen::Brewing && g_shotHoldUntil==SHOT_HOLD_UNTIL_TAP) {
+      g_shotHoldUntil=0; g_scr=Screen::Home; g_dirty=true;
+    }
     for(auto& b:g_btns) if(t.x>=b.x&&t.x<b.x+b.w&&t.y>=b.y&&t.y<b.y+b.h){
       M5.Speaker.tone(2200,18);
       if(b.tap) b.tap();
