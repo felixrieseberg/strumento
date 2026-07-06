@@ -466,20 +466,32 @@ static void renderControls(const lmcloud::State& s){
       stepRow(y,"  PRE OUT s", pout,0.5f,[pin](float v){lmcloud::setPreBrewTimes(pin,v);});  y+=40;
     }
   }
-  // backflush — the cloud only *arms* cleaning; the machine then waits for the
-  // user to move the brew paddle. Reflect that state so a tap isn't a silent
-  // no-op: START → MOVE PADDLE (armed) → CLEANING.
+  // backflush — the cloud only *arms* cleaning; the machine then waits ~15s for
+  // the user to move the brew paddle (else it aborts), then pulses water in
+  // go/pause cycles. Reflect that state machine so a tap isn't a silent no-op:
+  // START → MOVE PADDLE + countdown (armed) → FLUSHING/CLEANING (pulses) → START.
   tracked(18,y+18,"BACKFLUSH",2,LM_RED,&F_LABEL,middle_left);
   if (s.backflush==lmcloud::BackflushStatus::Requested){
-    tracked(W-18,y+18,"MOVE PADDLE",1,LM_RED,&F_LABEL_SM,middle_right);
+    uint32_t el = millis()-s.bfPhaseAtMs;
+    int left = (s.bfPhaseAtMs && el<cfg::BACKFLUSH_ARM_MS)
+               ? (int)((cfg::BACKFLUSH_ARM_MS-el+999)/1000) : 0;
+    char b[20];
+    if (left) snprintf(b,sizeof b,"MOVE PADDLE  %d",left);
+    else      snprintf(b,sizeof b,"MOVE PADDLE");     // grace: window lapsed,
+                                                      // waiting on the cloud
+    tracked(W-18,y+18,b,1,LM_RED,&F_LABEL_SM,middle_right);
   } else if (s.backflush==lmcloud::BackflushStatus::Cleaning){
-    tracked(W-18,y+18,"CLEANING",2,LM_RED,&F_LABEL,middle_right);
+    // during the cycle the machine pulses the pump; Brewing = water running
+    tracked(W-18,y+18,
+            s.machine==lmcloud::MachineStatus::Brewing?"FLUSHING":"CLEANING",
+            2,LM_RED,&F_LABEL,middle_right);
   } else {
     g_can.fillSmoothRoundRect(W-18-90,y+6,90,24,12,LM_RED);
     g_can.fillSmoothRoundRect(W-18-89,y+7,88,22,11,BG());
     tracked(W-18-45,y+18,"START",2,LM_RED,&F_LABEL,middle_center);
+    g_btns.push_back({W-18-100,y+2,118,32,[]{ lmcloud::startBackflush(); }});
   }
-  g_btns.push_back({W-18-100,y+2,118,32,[]{ lmcloud::startBackflush(); }});      y+=40;
+  y+=40;
   // smart standby
   toggleRow(y,"SMART STANDBY",sbEn,[=]{ lmcloud::setSmartStandby(!sbEn,sbMin,sbAfter);}); y+=40;
   stepRow  (y,"  STANDBY MIN",(float)sbMin,5,
@@ -634,8 +646,17 @@ static void render(){
   lmcloud::lockState();
   auto& s=lmcloud::state();
   if (g_dbgBrewSec>=0){ /* debug: honour g_scr as set */ }
-  else if (s.machine==lmcloud::MachineStatus::Brewing && g_scr!=Screen::Settings){
+  else if (s.machine==lmcloud::MachineStatus::Brewing &&
+           s.backflush==lmcloud::BackflushStatus::Off && g_scr!=Screen::Settings){
+    // backflush cycles pulse the pump and report Brewing — that's cleaning,
+    // not a shot, so don't hijack the chronograph for it
     g_scr=Screen::Brewing; g_shotHoldUntil=0;        // live brew — cancel any freeze
+  }
+  else if (g_scr==Screen::Brewing &&
+           s.backflush!=lmcloud::BackflushStatus::Off){
+    // a cleaning pulse leaked us onto the chronograph (backflush status landed
+    // a frame late) — bail without faking a "shot ended" freeze
+    g_shotHoldUntil=0; g_scr=Screen::Home;
   }
   else if (g_scr==Screen::Brewing){
     // Brew ended. The cloud reports the stop a beat after the paddle drops, so

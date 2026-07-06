@@ -56,6 +56,10 @@ struct State {
   int           totalCoffee  = 0, totalFlush = 0;
   int64_t       lastCleanMs  = 0;                // CMBackFlush.lastCleaningStartTime
   BackflushStatus backflush  = BackflushStatus::Off;
+  uint32_t      bfPhaseAtMs  = 0;                // millis() when the current backflush
+                                                 // phase began; the machine aborts ~15s
+                                                 // into Requested if the paddle isn't
+                                                 // moved (cfg::BACKFLUSH_ARM_MS)
   std::vector<Firmware>  firmwares;
   std::vector<WakeSched> schedules;
   // misc

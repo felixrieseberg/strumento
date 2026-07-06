@@ -100,6 +100,11 @@ constexpr const char* DEF_LM_SERIAL = SECRET_LM_SERIAL;
 constexpr uint32_t POLL_DASHBOARD_MS = 30000;   // REST fallback when WS quiet
 constexpr uint32_t POLL_SLOW_MS      = 300000;  // scheduling/settings/stats
 constexpr uint32_t TOKEN_REFRESH_SLOP_S = 600;  // refresh 10 min before expiry
+constexpr uint32_t BACKFLUSH_ARM_MS  = 15000;   // machine self-aborts if the paddle
+                                                // isn't moved within this window
+constexpr uint32_t BACKFLUSH_ARM_GRACE_MS = 5000;   // slack before mirroring that abort
+                                                    // locally (command + status latency)
+constexpr uint32_t BACKFLUSH_CLEAN_MAX_MS = 300000; // stuck-"Cleaning" safety net
 
 struct ShotHoldChoice {
   uint16_t seconds;   // 0 = until tap

@@ -31,11 +31,13 @@ void setup() {
 }
 
 void loop() {
-  // serial debug shell: '0'..'3' force screen ('1'→brewing@24.7s), 's' screenshot
+  // serial debug shell: '0'..'3' force screen ('1'→brewing@24.7s), 's' screenshot,
+  // 'b' arm backflush (same as tapping START)
   while (Serial.available()) {
     int c=Serial.read();
     if (c>='0'&&c<='7') ui::debugScreen(c-'0', c=='1'?24.7f:0);
     else if (c=='d'||c=='l') ui::setDark(c=='d');
+    else if (c=='b') lmcloud::startBackflush();
     else if (c=='s') { vTaskSuspend(g_cloudTask); ui::screenshot(); vTaskResume(g_cloudTask); }
   }
   ui::tick();

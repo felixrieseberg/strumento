@@ -88,6 +88,21 @@ static BackflushStatus parseBackflush(const char* s) {
 // in flight before the command landed can't immediately clear the optimistic
 // "Requested" state. Written by UI thread, read by cloud thread (32-bit atomic).
 static volatile uint32_t g_bfHoldUntil = 0;
+// Set when the local arm-window expiry fires, so a stale dashboard frame still
+// reporting "Requested" can't re-arm the countdown in a loop. Cleared by a
+// fresh user arm (UI thread, 32-bit atomic).
+static volatile uint32_t g_bfReqIgnoreUntil = 0;
+// One forced dashboard poll after a local expiry — WS pushes are exactly what
+// went missing, so resync over REST even while subscribed.
+static volatile bool g_bfResync = false;
+
+// Single writer for the backflush pair: stamp the phase clock on transitions,
+// clear it when idle. Call under StateLock.
+static void bfSet(BackflushStatus bs) {
+  if (bs != g_state.backflush)
+    g_state.bfPhaseAtMs = (bs == BackflushStatus::Off) ? 0 : millis();
+  g_state.backflush = bs;
+}
 
 static bool pending(Cmd c);   // fwd — defined in debounce section
 
@@ -131,9 +146,13 @@ static void applyWidgets(JsonArrayConst widgets) {
       if (!o["lastCleaningStartTime"].isNull())
         g_state.lastCleanMs = (int64_t)(o["lastCleaningStartTime"].as<double>());
       BackflushStatus bs = parseBackflush(o["status"] | "Off");
-      // Don't let a stale "Off" stomp the just-armed optimistic "Requested".
-      if (!(bs == BackflushStatus::Off && millis() < g_bfHoldUntil))
-        g_state.backflush = bs;
+      // Don't let a stale "Off" stomp the just-armed optimistic "Requested",
+      // and don't let a stale "Requested" re-arm right after a local expiry.
+      if (!(bs == BackflushStatus::Off && g_bfHoldUntil &&
+            (int32_t)(millis() - g_bfHoldUntil) < 0) &&
+          !(bs == BackflushStatus::Requested && g_bfReqIgnoreUntil &&
+            (int32_t)(millis() - g_bfReqIgnoreUntil) < 0))
+        bfSet(bs);
     } else if (!strcmp(code, "CMPreBrewing")) {
       if (!pending(Cmd::PreMode))
         g_state.preMode = parsePreMode(o["mode"] | "Disabled");
@@ -392,8 +411,9 @@ bool setSmartStandby(bool en,int min,bool afterBrew){
   changed(); enqDebounced(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
 }
 bool startBackflush() {
-  { StateLock _l; g_state.backflush = BackflushStatus::Requested; }
+  { StateLock _l; bfSet(BackflushStatus::Requested); }
   g_bfHoldUntil = millis() + 2500;   // bridge the optimistic→cloud-confirm gap
+  g_bfReqIgnoreUntil = 0;            // fresh arm — accept cloud confirms again
   changed(); enq(Cmd::Backflush); return true;
 }
 void reconnect()            { g_wantReconnect = true; }
@@ -558,6 +578,27 @@ void begin() {
 }
 
 void loop() {
+  // Mirror the machine's own arm window: if the paddle isn't moved in time the
+  // machine silently disarms, and the cloud doesn't always push that change —
+  // expire the armed state locally so the UI can't stick on "MOVE PADDLE".
+  // Grace covers command + status latency so a paddle lift near the end of the
+  // window isn't cut off before the cloud reports Cleaning. A stuck "Cleaning"
+  // gets a generous safety net of its own.
+  if (g_state.backflush != BackflushStatus::Off) {   // dirty pre-check; lock below
+    StateLock _l;
+    uint32_t ph = g_state.bfPhaseAtMs, el = millis() - ph;
+    if (ph &&
+        ((g_state.backflush == BackflushStatus::Requested &&
+          el > cfg::BACKFLUSH_ARM_MS + cfg::BACKFLUSH_ARM_GRACE_MS) ||
+         (g_state.backflush == BackflushStatus::Cleaning &&
+          el > cfg::BACKFLUSH_CLEAN_MAX_MS))) {
+      if (g_state.backflush == BackflushStatus::Requested)
+        g_bfReqIgnoreUntil = millis() + 65000;   // outlive stale polls/frames
+      bfSet(BackflushStatus::Off);
+      g_bfResync = true;                         // resync with the cloud's truth
+      changed();
+    }
+  }
   if (g_wantReconnect) { g_wantReconnect=false; execCmd({Cmd::Reconnect,0,0,false}); }
   if (!ensureWifi()) { setNet(Net::Down, "wifi"); return; }
   if (!ensureAuth()) return;
@@ -576,9 +617,10 @@ void loop() {
 
   g_ws.loop();
 
-  if (millis() > g_nextPoll) {
+  if (g_bfResync || millis() > g_nextPoll) {
     g_nextPoll = millis() + cfg::POLL_DASHBOARD_MS;
-    if (!g_wsSubscribed) pollDashboard();   // REST fallback
+    if (g_bfResync || !g_wsSubscribed) pollDashboard();   // REST fallback
+    g_bfResync = false;
   }
   if (millis() > g_nextSlowPoll) {
     g_nextSlowPoll = millis() + cfg::POLL_SLOW_MS;
