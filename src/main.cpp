@@ -35,7 +35,7 @@ void loop() {
   // 'b' arm backflush (same as tapping START)
   while (Serial.available()) {
     int c=Serial.read();
-    if (c>='0'&&c<='7') ui::debugScreen(c-'0', c=='1'?24.7f:0);
+    if (c>='0'&&c<='8') ui::debugScreen(c-'0', c=='1'?24.7f:0);
     else if (c=='d'||c=='l') ui::setDark(c=='d');
     else if (c=='b') lmcloud::startBackflush();
     else if (c=='s') { vTaskSuspend(g_cloudTask); ui::screenshot(); vTaskResume(g_cloudTask); }

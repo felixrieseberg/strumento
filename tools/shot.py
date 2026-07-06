@@ -11,9 +11,10 @@ B64=re.compile(r"^[A-Za-z0-9+/]{4,}=*$")
 PORT="/dev/cu.usbserial-5B1F0085301"; W,H=320,240
 import sys
 SCREENS={"home_on":"l4","home_tally":"l6","home_clock":"l7","home_standby":"l0",
-         "brew":"1","controls":"l2","stats":"l5","setup":"l3"}
+         "brew":"1","controls":"l2","stats":"l5","setup":"l3","setup2":"l8"}
 if "--dark" in sys.argv:
-    SCREENS={"home_dark":"d4","controls_dark":"d2","stats_dark":"d5","setup_dark":"d3"}
+    SCREENS={"home_dark":"d4","controls_dark":"d2","stats_dark":"d5",
+             "setup_dark":"d3","setup2_dark":"d8"}
 os.makedirs("shots",exist_ok=True)
 
 p=serial.Serial(PORT,115200,timeout=0.5)

@@ -71,6 +71,33 @@ static int      g_homePage   = 0;       // 0=dial 1=tally 2=clock
 static constexpr int HOME_PAGES = 3;
 static uint32_t g_vibOffAt   = 0;       // non-blocking haptic deadline
 
+// ── power / battery ─────────────────────────────────────────────────────────
+static constexpr uint8_t BRIGHT_FULL = 200, BRIGHT_DIM = 20;
+static int8_t   g_batPct       = -1;      // 0-100, -1 = unknown
+static bool     g_batChg       = false;
+static bool     g_dimmed       = false;
+static uint32_t g_lastActivity = 0;
+static constexpr uint8_t DIM_OPTS[]   = {0,15,30,60,120};
+static constexpr uint8_t SLEEP_OPTS[] = {0,1,2,5,10,30};
+template<size_t N>
+static uint8_t nextOpt(const uint8_t (&a)[N], uint8_t cur){
+  for(size_t i=0;i<N;++i) if(a[i]==cur) return a[(i+1)%N];
+  return a[0];
+}
+static void noteActivity(){
+  g_lastActivity=millis();
+  if (g_dimmed){ g_dimmed=false; M5.Display.setBrightness(BRIGHT_FULL); }
+}
+static void goToSleep(){
+  M5.Power.setVibration(0);
+  M5.Speaker.tone(1400,40); delay(60);
+  M5.Display.fillScreen(TFT_BLACK);
+  M5.Display.setBrightness(0);
+  M5.Power.powerOff();          // AXP shutdown — power button wakes (cold boot)
+  M5.Power.deepSleep(0, true);  // PMIC-less fallback: ESP deep sleep, touch wake
+  esp_deep_sleep_start();       // last resort — never returns
+}
+
 struct Btn { int x,y,w,h; std::function<void()> tap; };
 static std::vector<Btn> g_btns;
 
@@ -195,6 +222,24 @@ static const char* boilerWord(lmcloud::BoilerStatus b){
     case B::StandBy:return "STANDBY";default:return "—";}
 }
 
+// 20×10px cell, right-aligned at rx; bolt overlay while the AXP says charging.
+static void batteryGlyph(int rx,int cy,uint16_t bg,uint16_t fg){
+  if (g_batPct<0) return;
+  const int bw=18, bh=10, nub=2;
+  int bx=rx-bw-nub;
+  g_can.fillRect(bx-2,cy-bh/2-2,bw+nub+4,bh+4,bg);          // erase hairline
+  g_can.drawRect(bx,cy-bh/2,bw,bh,BRASS);
+  g_can.fillRect(bx+bw,cy-2,nub,4,BRASS);
+  int fw = (bw-4)*constrain((int)g_batPct,0,100)/100;
+  uint16_t fc = g_batChg?BRASS_HI : (g_batPct<=15?LM_RED:fg);
+  if (fw>0) g_can.fillRect(bx+2,cy-bh/2+2,fw,bh-4,fc);
+  if (g_batChg){
+    int mx=bx+bw/2;
+    g_can.fillTriangle(mx+2,cy-bh/2+1, mx-2,cy+1, mx+1,cy+1, LM_RED);
+    g_can.fillTriangle(mx-1,cy-1, mx+2,cy-1, mx-2,cy+bh/2-1, LM_RED);
+  }
+}
+
 // ── header ───────────────────────────────────────────────────────────────────
 static void header(const lmcloud::State& s, bool forceDark=false) {
   bool dark = forceDark || g_dark;
@@ -217,8 +262,9 @@ static void header(const lmcloud::State& s, bool forceDark=false) {
   g_can.setFont(&F_LABEL_SM); g_can.setTextColor(fg);
   g_can.setTextDatum(middle_right);
   String ck=fmtClock(); int cw=g_can.textWidth(ck);
-  g_can.fillRect(W-14-cw-6,12,cw+12,16,bg);
+  g_can.fillRect(W-14-cw-38,12,cw+44,16,bg);      // clears clock + battery zone
   g_can.drawString(ck, W-14, 19);
+  batteryGlyph(W-14-cw-10, 19, bg, fg);
 }
 
 // ── piano-key bottom bar ─────────────────────────────────────────────────────
@@ -620,6 +666,14 @@ static void renderSettings(){
     settings.save();
     g_dirty=true;
   }); y+=36;
+  auto secLbl=[](uint8_t s)->String{ return s==0?"OFF":s<60?String(s)+"s":String(s/60)+"m"; };
+  auto minLbl=[](uint8_t m)->String{ return m==0?"OFF":String(m)+"m"; };
+  cycleRow(y,"DIM AFTER", secLbl(settings.dimSec).c_str(), []{
+    settings.dimSec=nextOpt(DIM_OPTS,settings.dimSec); settings.save(); g_dirty=true;
+  }); y+=40;
+  cycleRow(y,"AUTO SLEEP", minLbl(settings.sleepMin).c_str(), []{
+    settings.sleepMin=nextOpt(SLEEP_OPTS,settings.sleepMin); settings.save(); g_dirty=true;
+  }); y+=40;
 
   g_can.clearClipRect();
   int contentH = y - (top - g_ctrlScroll);
@@ -690,7 +744,8 @@ void begin(){
   g_can.setPsram(true);
   g_can.setColorDepth(16);
   g_can.createSprite(W,H);
-  M5.Display.setBrightness(200);
+  M5.Display.setBrightness(BRIGHT_FULL);
+  g_lastActivity = millis();
   // Parse VLW headers once; setFont(&F_*) is then a pointer swap.
   AA_WORDMARK.load(vlw_wordmark, sizeof vlw_wordmark);
   AA_SERIF_SM.load(vlw_serif_sm, sizeof vlw_serif_sm);
@@ -718,6 +773,7 @@ void splash(const char* line){
 }
 
 void screenshot(){
+  noteActivity();
   const uint8_t* buf=(const uint8_t*)g_can.getBuffer();
   static const char* T="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   Serial.flush(); delay(10);
@@ -737,26 +793,52 @@ void screenshot(){
 }
 
 void debugScreen(int n,float arg){
+  noteActivity();
   g_dbgBrewSec = (n==1)?arg:-1;
   g_dbgOn      = (n==4||n==6||n==7);
   g_homePage   = (n==6)?1:(n==7)?2:0;
-  g_scr = (n==4||n==6||n==7)?Screen::Home : (n==5)?Screen::Stats : (Screen)n;
+  g_ctrlScroll = 0;
+  g_scr = (n==4||n==6||n==7)?Screen::Home
+        : (n==5)?Screen::Stats
+        : (n==8)?Screen::Settings : (Screen)n;
   render();
+  if (n==8){ g_ctrlScroll=g_ctrlMax; render(); }   // second pass: scrolled to bottom
 }
 
 void tick(){
   M5.update();
-  if (g_vibOffAt && millis()>=g_vibOffAt){ M5.Power.setVibration(0); g_vibOffAt=0; }
+  uint32_t now=millis();
+  if (g_vibOffAt && now>=g_vibOffAt){ M5.Power.setVibration(0); g_vibOffAt=0; }
+
+  // ── power button: short-press = AXP power-off ──
+  // (skip first ~1.5 s so the wake-up press itself can't read back as a click)
+  if (M5.BtnPWR.wasClicked() && now>1500) goToSleep();
+
   auto t=M5.Touch.getDetail();
   bool scrollable = (g_scr==Screen::Controls || g_scr==Screen::Stats ||
                      g_scr==Screen::Settings);
   bool swipeable  = (g_scr==Screen::Home);
+  bool touched    = t.wasPressed() || t.isPressed() || t.wasReleased();
+
+  // ── activity / dim / auto-sleep ──
+  static bool s_swallow=false;              // eat the touch that woke a dim screen
+  bool brewing = (g_scr==Screen::Brewing);
+  if (touched || brewing) g_lastActivity = now;
+  if (g_dimmed && (touched || brewing)){    // shot start also snaps back to full
+    g_dimmed=false; M5.Display.setBrightness(BRIGHT_FULL);
+    if (touched) s_swallow=true;
+  }
+  uint32_t idle = now - g_lastActivity;
+  if (!g_dimmed && settings.dimSec && idle > (uint32_t)settings.dimSec*1000){
+    g_dimmed=true; M5.Display.setBrightness(BRIGHT_DIM);
+  }
+  if (settings.sleepMin && idle > (uint32_t)settings.sleepMin*60000) goToSleep();
 
   if (t.wasPressed()){
     g_dragging=false; g_dragStartX=t.x; g_dragStartY=t.y;
     g_dragStartScroll=g_ctrlScroll;
   }
-  if (t.isPressed() && scrollable){
+  if (t.isPressed() && scrollable && !s_swallow){
     int dy=t.y-g_dragStartY;
     if (g_dragging || abs(dy)>8){
       g_dragging=true;
@@ -764,7 +846,7 @@ void tick(){
       g_dirty=true;
     }
   }
-  if (t.wasReleased() && swipeable){
+  if (t.wasReleased() && swipeable && !s_swallow){
     int dx=t.x-g_dragStartX, dy=t.y-g_dragStartY;
     if (abs(dx)>50 && abs(dx)>2*abs(dy)){
       g_homePage = (g_homePage + (dx<0?1:HOME_PAGES-1)) % HOME_PAGES;
@@ -772,17 +854,29 @@ void tick(){
       g_dragging=true; g_dirty=true;      // suppress tap
     }
   }
-  if (t.wasReleased() && !g_dragging){
+  if (t.wasReleased() && !g_dragging && !s_swallow){
     if (g_scr==Screen::Brewing && g_shotHoldUntil==SHOT_HOLD_UNTIL_TAP) {
       g_shotHoldUntil=0; g_scr=Screen::Home; g_dirty=true;
     }
     for(auto& b:g_btns) if(t.x>=b.x&&t.x<b.x+b.w&&t.y>=b.y&&t.y<b.y+b.h){
       M5.Speaker.tone(2200,18);
       if(b.tap) b.tap();
+      g_lastActivity=millis();   // tap handlers may block (keyboard modal)
       g_dirty=true; break;
     }
   }
-  uint32_t now=millis();
+  if (t.wasReleased()) s_swallow=false;
+
+  // ── battery poll (AXP I2C) — 5 s cadence, redraw only on change ──
+  static uint32_t s_batAt=0;
+  if (now>=s_batAt){
+    s_batAt = now+5000;
+    int32_t raw=M5.Power.getBatteryLevel();
+    int8_t  p = (raw<0||raw>100) ? -1 : (int8_t)raw;   // -1 = hide (no gauge)
+    bool    c = M5.Power.isCharging()==m5::Power_Class::is_charging;
+    if (p!=g_batPct || c!=g_batChg){ g_batPct=p; g_batChg=c; g_dirty=true; }
+  }
+
   bool fast = (g_scr==Screen::Brewing) || (scrollable && t.isPressed());
   bool due  = fast ? (now-g_lastFrame>60) : (now-g_lastFrame>1000);
   if (g_dirty||due){ g_lastFrame=now; g_dirty=false; render(); }

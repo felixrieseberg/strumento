@@ -21,6 +21,8 @@ void Settings::load() {
   if (timeZoneIndex >= cfg::TIME_ZONE_COUNT) timeZoneIndex = cfg::DEF_TIME_ZONE_INDEX;
   shotHoldIndex = p_.getUChar("sh", cfg::DEF_SHOT_HOLD_INDEX);
   if (shotHoldIndex >= cfg::SHOT_HOLD_COUNT) shotHoldIndex = cfg::DEF_SHOT_HOLD_INDEX;
+  dimSec     = p_.getUChar("ds", 30);
+  sleepMin   = p_.getUChar("sm", 2);
   instId   = p_.getString("iid", "");
   size_t n = p_.getBytes("epk", ecPriv, sizeof ecPriv);
   ecPrivValid = (n == sizeof ecPriv);
@@ -40,6 +42,8 @@ void Settings::save() {
   p_.putBool  ("fh", fahrenheit);
   p_.putUChar ("tz", timeZoneIndex);
   p_.putUChar ("sh", shotHoldIndex);
+  p_.putUChar ("ds", dimSec);
+  p_.putUChar ("sm", sleepMin);
   p_.putString("iid", instId);
   if (ecPrivValid) p_.putBytes("epk", ecPriv, sizeof ecPriv);
   p_.end();
