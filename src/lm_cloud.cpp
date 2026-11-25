@@ -23,14 +23,34 @@ static bool                  g_wsSubscribed = false;
 static String                g_wsHdr;             // keep alive while WS holds the c_str
 static uint32_t              g_nextPoll = 0, g_nextSlowPoll = 0,
                              g_nextWifiTry = 0, g_nextWsTry = 0;
+// Auth retry backoff — a wrong password must not hammer the LM auth endpoints.
+static uint32_t              g_nextAuthTry = 0, g_authBackoffMs = 0;
+static constexpr uint32_t    AUTH_BACKOFF_MIN_MS = 5000;
+static constexpr uint32_t    AUTH_BACKOFF_MAX_MS = 10UL * 60 * 1000;
+// Cloud-task copy of settings.lmSerial; only this task writes the setting.
+static String               g_serial;
+// Forces a REST dashboard poll on the next loop (resync with the cloud's truth).
+static volatile bool         g_resync = false;
+static volatile bool         g_resyncSlow = false;
+
+// Wrap-safe millis() deadline check (millis() wraps every ~49.7 days).
+static inline bool reached(uint32_t deadline) {
+  return (int32_t)(millis() - deadline) >= 0;
+}
+// Read a settings String the UI may be editing concurrently.
+static String settingStr(const String& s) { SettingsLock _l; return s; }
 
 // cross-task command queue (UI → cloud task)
 enum class Cmd : uint8_t { None, Power, Steam, SteamLevel, CoffeeTemp, PreMode,
                            PreBrewTimes, SmartStandby, Backflush, Reconnect,
                            _Count };
-struct QItem { Cmd c; float f, f2; bool b; };
+struct QItem { Cmd c; float f, f2; bool b; uint32_t at; };   // at = millis() when issued
 static QueueHandle_t g_q;
 static volatile bool g_wantReconnect = false;
+static volatile bool g_reconnectNewAccount = false;
+// A command older than this when the cloud can finally send it is dropped:
+// a WAKE tapped while offline must not fire whenever WiFi comes back.
+static constexpr uint32_t CMD_MAX_AGE_MS = 30000;
 
 // g_state is read by UI (core 1) and mutated by cloud (core 0). Guard every
 // mutation; UI takes the lock for the duration of one render frame.
@@ -47,6 +67,7 @@ static void changed() { g_state.lastUpdateMs = millis(); if (g_cb) g_cb(); }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 static void setNet(Net n, const String& msg = "") {
+  StateLock _l;
   if (g_state.net != n || g_state.netMsg != msg) { g_state.net = n; g_state.netMsg = msg; changed(); }
 }
 
@@ -101,6 +122,12 @@ static void bfSet(BackflushStatus bs) {
   if (bs != g_state.backflush)
     g_state.bfPhaseAtMs = (bs == BackflushStatus::Off) ? 0 : millis();
   g_state.backflush = bs;
+}
+
+// The arm command was rejected or dropped — leave Arming, never show MOVE PADDLE.
+static void bfAbortArming() {
+  StateLock _l;
+  if (g_state.backflush == BackflushStatus::Arming) { bfSet(BackflushStatus::Off); changed(); }
 }
 
 static bool pending(Cmd c);   // fwd — defined in debounce section
@@ -193,7 +220,7 @@ static void applyDashboard(JsonDocument& doc) {
 // ── REST ─────────────────────────────────────────────────────────────────────
 static int httpJson(const char* method, const String& path, const String& body,
                     JsonDocument* out, bool auth) {
-  WiFiClientSecure tls; tls.setCACert(LM_ROOT_CA);      // LM rotates certs; pinning is brittle
+  WiFiClientSecure tls; tls.setCACert(LM_ROOT_CA);      // root-CA bundle, see lm_ca.h
   HTTPClient http; http.setReuse(false); http.setTimeout(12000);
   String url = String(cfg::LM_API) + path;
   if (!http.begin(tls, url)) return -1;
@@ -206,6 +233,11 @@ static int httpJson(const char* method, const String& path, const String& body,
   http.addHeader("Content-Type", "application/json");
   int code = body.isEmpty() ? http.sendRequest(method)
                             : http.sendRequest(method, (uint8_t*)body.c_str(), body.length());
+  if (auth && code == 401) {
+    // Token rejected before our timer expired it — force a refresh/sign-in.
+    Serial.println("[lm] 401 — token rejected, re-authenticating");
+    g_tokenExpiry = 0;
+  }
   if (out && code > 0 && code < 400) {
     String payload = http.getString();
     auto err = deserializeJson(*out, payload);
@@ -233,9 +265,12 @@ static bool registerInstall() {
 }
 
 static bool signIn() {
+  String user, pass;
+  { SettingsLock _l; user = settings.lmUser; pass = settings.lmPass; }
+  if (user.isEmpty() || pass.isEmpty()) { setNet(Net::WifiUp, "no account"); return false; }
   JsonDocument body, resp;
-  body["username"] = settings.lmUser;
-  body["password"] = settings.lmPass;
+  body["username"] = user;
+  body["password"] = pass;
   String s; serializeJson(body, s);
   int code = httpJson("POST", "/auth/signin", s, &resp, false);
   Serial.printf("[lm] /auth/signin -> %d\n", code);
@@ -248,11 +283,12 @@ static bool signIn() {
 
 static bool refreshTok() {
   JsonDocument body, resp;
-  body["username"]     = settings.lmUser;
+  body["username"]     = settingStr(settings.lmUser);
   body["refreshToken"] = g_refresh;
   String s; serializeJson(body, s);
   int code = httpJson("POST", "/auth/refreshtoken", s, &resp, false);
   if (code != 200) return signIn();
+  if (resp["accessToken"].isNull()) return signIn();
   g_access  = resp["accessToken"]  | g_access;
   g_refresh = resp["refreshToken"] | g_refresh;
   g_tokenExpiry = time(nullptr) + 50*60;
@@ -261,13 +297,14 @@ static bool refreshTok() {
 
 static void pollDashboard() {
   JsonDocument resp;
-  int code = httpJson("GET", "/things/" + settings.lmSerial + "/dashboard", "", &resp, true);
+  if (g_serial.isEmpty()) return;
+  int code = httpJson("GET", "/things/" + g_serial + "/dashboard", "", &resp, true);
   Serial.printf("[lm] /dashboard -> %d (heap=%u)\n", code, ESP.getFreeHeap());
   if (code == 200) applyDashboard(resp);
 }
 
 static void discoverSerial() {
-  if (!settings.lmSerial.isEmpty()) return;
+  if (!g_serial.isEmpty()) return;
   JsonDocument resp;
   int code = httpJson("GET", "/things", "", &resp, true);
   Serial.printf("[lm] /things -> %d\n", code);
@@ -276,8 +313,9 @@ static void discoverSerial() {
   if (arr.isNull() || arr.size() == 0) return;
   const char* sn = arr[0]["serialNumber"] | "";
   if (!*sn) return;
-  settings.lmSerial = sn; settings.save();
-  g_state.serial = sn;
+  g_serial = sn;
+  { SettingsLock _l; settings.lmSerial = sn; settings.save(); }
+  { StateLock _l; g_state.serial = sn; }
   Serial.printf("[lm] auto-discovered serial %s\n", sn);
 }
 
@@ -289,7 +327,8 @@ static uint8_t dayBit(const char* d) {
 }
 
 static void pollSlowState() {
-  String base = "/things/" + settings.lmSerial;
+  if (g_serial.isEmpty()) return;
+  String base = "/things/" + g_serial;
   // Fetch into locals first; lock only around the swap into g_state.
   std::vector<WakeSched> sched; std::vector<Firmware> fws;
   bool gotSched=false, gotFw=false;
@@ -345,14 +384,16 @@ static void pollSlowState() {
 }
 
 static bool sendCommand(const char* cmd, JsonDocument& body) {
+  if (g_serial.isEmpty()) return false;
   String s; serializeJson(body, s);
-  int code = httpJson("POST", "/things/" + settings.lmSerial + "/command/" + cmd, s, nullptr, true);
+  int code = httpJson("POST", "/things/" + g_serial + "/command/" + cmd, s, nullptr, true);
   return code >= 200 && code < 300;
 }
 
 // ── public commands (UI thread → optimistic state + enqueue; cloud confirms) ─
 static void enq(Cmd c, bool b=false, float f=0, float f2=0){
-  QItem i{c,f,f2,b}; if(g_q) xQueueSend(g_q,&i,0);
+  QItem i{c,f,f2,b,millis()};
+  if(g_q && xQueueSend(g_q,&i,0)!=pdTRUE) g_resync=true;   // full — undo optimism
 }
 // Debounced enqueue: rapid stepper taps coalesce; the cloud only sees the
 // final value once taps stop for DEBOUNCE_MS. One pending slot per Cmd kind.
@@ -362,14 +403,16 @@ static QItem    g_pend   [PEND_N];
 static uint32_t g_pendDue[PEND_N] = {0};
 static void enqDebounced(Cmd c, bool b=false, float f=0, float f2=0){
   int k=(int)c; if(k<0||k>=PEND_N) return;
-  g_pend[k]={c,f,f2,b}; g_pendDue[k]=millis()+DEBOUNCE_MS;
+  g_pend[k]={c,f,f2,b,0};
+  uint32_t due=millis()+DEBOUNCE_MS; g_pendDue[k]=due?due:1;   // 0 = idle
 }
 static bool pending(Cmd c){ return g_pendDue[(int)c]!=0; }
 static void flushDebounced(){
   uint32_t now=millis();
   for(int k=0;k<PEND_N;++k)
-    if(g_pendDue[k] && now>=g_pendDue[k]){
-      g_pendDue[k]=0; if(g_q) xQueueSend(g_q,&g_pend[k],0);
+    if(g_pendDue[k] && (int32_t)(now-g_pendDue[k])>=0){
+      g_pendDue[k]=0; g_pend[k].at=now;
+      if(g_q && xQueueSend(g_q,&g_pend[k],0)!=pdTRUE) g_resync=true;
     }
 }
 bool setPower(bool on) {
@@ -379,20 +422,24 @@ bool setPower(bool on) {
   changed(); enq(Cmd::Power,on); return true;
 }
 bool setSteam(bool on) {
+  StateLock _l;
   g_state.steamEnabled=on;
   g_state.steamStatus=on?BoilerStatus::HeatingUp:BoilerStatus::Off;
   changed(); enq(Cmd::Steam,on); return true;
 }
 bool setCoffeeTemp(float c) {
+  StateLock _l;
   g_state.coffeeTarget=roundf(c*10)/10; changed();
   enqDebounced(Cmd::CoffeeTemp,0,c); return true;
 }
 bool setSteamLevel(uint8_t lvl) {
   lvl = constrain(lvl,(uint8_t)1,(uint8_t)3);
+  StateLock _l;
   g_state.steamLevel=lvl; changed();
   enqDebounced(Cmd::SteamLevel,false,(float)lvl); return true;
 }
 bool setPreMode(PreMode m) {
+  StateLock _l;
   g_state.preMode=m; g_state.preBrewOn=(m!=PreMode::Disabled);
   changed(); enq(Cmd::PreMode,false,(float)(uint8_t)m); return true;
 }
@@ -402,11 +449,13 @@ bool setPreBrew(bool on) {
 bool setPreBrewTimes(float in,float out){
   in =constrain(roundf(in *10)/10, 1.f,9.f);
   out=constrain(roundf(out*10)/10, 1.f,9.f);
+  StateLock _l;
   g_state.preBrewIn=in; g_state.preBrewOut=out; changed();
   enqDebounced(Cmd::PreBrewTimes,false,in,out); return true;
 }
 bool setSmartStandby(bool en,int min,bool afterBrew){
   min = constrain(min,5,120);
+  StateLock _l;
   g_state.sbEnabled=en; g_state.sbMinutes=min; g_state.sbAfterBrew=afterBrew;
   changed(); enqDebounced(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
 }
@@ -416,52 +465,67 @@ bool startBackflush() {
   // lift it before the command landed, which just pulls a normal shot.
   { StateLock _l; bfSet(BackflushStatus::Arming); }
   g_bfReqIgnoreUntil = 0;            // fresh arm — accept cloud confirms again
-  changed(); enq(Cmd::Backflush); return true;
+  { StateLock _l; changed(); }
+  enq(Cmd::Backflush); return true;
 }
-void reconnect()            { g_wantReconnect = true; }
+void reconnect(bool newAccount) {
+  if (newAccount) g_reconnectNewAccount = true;
+  g_wantReconnect = true;
+}
 void uiTick()               { flushDebounced(); }
 
-static void execCmd(const QItem& i){
+// Returns false if the cloud rejected (or never received) the command.
+static bool execCmd(const QItem& i){
   JsonDocument b;
+  bool ok = true;
   switch(i.c){
     case Cmd::Power:      b["mode"]=i.b?"BrewingMode":"StandBy";
-                          sendCommand("CoffeeMachineChangeMode",b); break;
+                          ok=sendCommand("CoffeeMachineChangeMode",b); break;
     case Cmd::Steam:      b["boilerIndex"]=1; b["enabled"]=i.b;
-                          sendCommand("CoffeeMachineSettingSteamBoilerEnabled",b); break;
+                          ok=sendCommand("CoffeeMachineSettingSteamBoilerEnabled",b); break;
     case Cmd::SteamLevel:{
       char lv[8]; snprintf(lv,sizeof lv,"Level%d",(int)i.f);
       b["boilerIndex"]=1; b["targetLevel"]=lv;
-      sendCommand("CoffeeMachineSettingSteamBoilerTargetLevel",b); break;
+      ok=sendCommand("CoffeeMachineSettingSteamBoilerTargetLevel",b); break;
     }
     case Cmd::CoffeeTemp: b["boilerIndex"]=1; b["targetTemperature"]=roundf(i.f*10)/10;
-                          sendCommand("CoffeeMachineSettingCoffeeBoilerTargetTemperature",b); break;
+                          ok=sendCommand("CoffeeMachineSettingCoffeeBoilerTargetTemperature",b); break;
     case Cmd::PreMode:    b["mode"]=preModeStr((PreMode)(uint8_t)i.f);
-                          sendCommand("CoffeeMachinePreBrewingChangeMode",b); break;
+                          ok=sendCommand("CoffeeMachinePreBrewingChangeMode",b); break;
     case Cmd::PreBrewTimes:{
       auto t=b["times"].to<JsonObject>(); t["In"]=i.f; t["Out"]=i.f2;
-      b["groupIndex"]=1; b["doseIndex"]=g_state.preDoseIndex;
-      sendCommand("CoffeeMachinePreBrewingSettingTimes",b); break;
+      { StateLock _l; b["doseIndex"]=g_state.preDoseIndex; }
+      b["groupIndex"]=1;
+      ok=sendCommand("CoffeeMachinePreBrewingSettingTimes",b); break;
     }
     case Cmd::SmartStandby:
       b["enabled"]=i.b; b["minutes"]=(int)i.f;
       b["after"]=(i.f2>0.5f)?"LastBrewing":"PowerOn";
-      sendCommand("CoffeeMachineSettingSmartStandBy",b); break;
+      ok=sendCommand("CoffeeMachineSettingSmartStandBy",b); break;
     case Cmd::Backflush:  b["enabled"]=true;
-                          if (!sendCommand("CoffeeMachineBackFlushStartCleaning",b)) {
-                            StateLock _l;      // rejected — don't leave UI arming
-                            if (g_state.backflush == BackflushStatus::Arming) {
-                              bfSet(BackflushStatus::Off); changed();
-                            }
-                          } else g_bfNextConfirmPoll = millis() + 1000;
-                          break;
+                          ok=sendCommand("CoffeeMachineBackFlushStartCleaning",b);
+                          if (ok) g_bfNextConfirmPoll = millis() + 1000;
+                          break;   // failure: loop() drops Arming back to Off
     case Cmd::Reconnect:
       g_ws.disconnect(); WiFi.disconnect(true,false);
       g_access=""; g_refresh=""; g_registered=false; g_wsSubscribed=false;
-      g_nextWifiTry=0; g_nextPoll=0; g_nextSlowPoll=0; g_nextWsTry=0;
+      g_tokenExpiry=0; g_nextAuthTry=0; g_authBackoffMs=0;
+      g_nextWifiTry=millis(); g_nextPoll=millis(); g_nextSlowPoll=millis(); g_nextWsTry=0;
+      if (g_reconnectNewAccount) {
+        // Different LM account → the old machine serial isn't ours any more.
+        g_reconnectNewAccount = false;
+        { SettingsLock _l; settings.lmSerial = ""; settings.save(); }
+        g_serial = "";
+        StateLock _l; g_state.serial = ""; g_state.modelName = "";
+      } else {
+        g_serial = settingStr(settings.lmSerial);
+      }
       setNet(Net::Down,"reconnect");
       break;
     default: break;
   }
+  if (!ok) Serial.printf("[lm] command %d failed — resyncing\n", (int)i.c);
+  return ok;
 }
 
 // ── STOMP over WS ────────────────────────────────────────────────────────────
@@ -500,7 +564,7 @@ static void onWsEvent(WStype_t t, uint8_t* p, size_t n) {
       if (verbLen == 9 && !memcmp(frame, "CONNECTED", 9)) {
         Serial.println("[ws] STOMP CONNECTED, subscribing");
         stompSend("SUBSCRIBE", {
-          {"destination", "/ws/sn/" + settings.lmSerial + "/dashboard"},
+          {"destination", "/ws/sn/" + g_serial + "/dashboard"},
           {"ack", "auto"},
           {"id", lmcrypto::uuid4()},
           {"content-length", "0"},
@@ -557,10 +621,13 @@ static void wsStart() {
 // ── lifecycle ────────────────────────────────────────────────────────────────
 static bool ensureWifi() {
   if (WiFi.status() == WL_CONNECTED) return true;
-  if (millis() < g_nextWifiTry) return false;
-  Serial.printf("[wifi] connecting %s …\n", settings.wifiSsid.c_str());
+  if (!reached(g_nextWifiTry)) return false;
+  String ssid, pass;
+  { SettingsLock _l; ssid = settings.wifiSsid; pass = settings.wifiPass; }
+  if (ssid.isEmpty()) { g_nextWifiTry = millis() + 2000; return false; }   // not set up yet
+  Serial.printf("[wifi] connecting %s …\n", ssid.c_str());
   WiFi.mode(WIFI_STA);
-  WiFi.begin(settings.wifiSsid.c_str(), settings.wifiPass.c_str());
+  WiFi.begin(ssid.c_str(), pass.c_str());
   uint32_t t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 12000) delay(100);
   if (WiFi.status() != WL_CONNECTED) { g_nextWifiTry = millis() + 8000; return false; }
@@ -572,15 +639,33 @@ static bool ensureWifi() {
   return true;
 }
 
+static void authFailed() {
+  g_authBackoffMs = g_authBackoffMs ? min(g_authBackoffMs * 2, AUTH_BACKOFF_MAX_MS)
+                                    : AUTH_BACKOFF_MIN_MS;
+  g_nextAuthTry = millis() + g_authBackoffMs;
+  Serial.printf("[lm] auth failed — next try in %us\n", (unsigned)(g_authBackoffMs / 1000));
+}
+
 static bool ensureAuth() {
-  if (!g_registered) { if (!registerInstall()) return false; g_registered = true; }
-  if (g_access.isEmpty()) { if (!signIn()) return false; }
-  else if (time(nullptr) + (time_t)cfg::TOKEN_REFRESH_SLOP_S > g_tokenExpiry) refreshTok();
+  bool needSignIn  = !g_registered || g_access.isEmpty();
+  bool needRefresh = !needSignIn &&
+                     time(nullptr) + (time_t)cfg::TOKEN_REFRESH_SLOP_S > g_tokenExpiry;
+  if (!needSignIn && !needRefresh) return true;
+  // Backing off: keep using a still-present token, otherwise wait.
+  if (g_authBackoffMs && !reached(g_nextAuthTry)) return !needSignIn;
+  if (!g_registered) {
+    if (!registerInstall()) { authFailed(); return false; }
+    g_registered = true;
+  }
+  bool ok = g_access.isEmpty() ? signIn() : refreshTok();
+  if (!ok) { authFailed(); return !g_access.isEmpty() && !needSignIn; }
+  g_authBackoffMs = 0;
   return true;
 }
 
 void begin() {
-  g_state.serial = settings.lmSerial;
+  g_serial = settingStr(settings.lmSerial);
+  g_state.serial = g_serial;
   g_q        = xQueueCreate(8, sizeof(QItem));
   g_stateMtx = xSemaphoreCreateRecursiveMutex();
 }
@@ -609,12 +694,27 @@ void loop() {
       changed();
     }
   }
-  if (g_wantReconnect) { g_wantReconnect=false; execCmd({Cmd::Reconnect,0,0,false}); }
+  if (g_wantReconnect) { g_wantReconnect=false; execCmd({Cmd::Reconnect,0,0,false,millis()}); }
   if (!ensureWifi()) { setNet(Net::Down, "wifi"); return; }
   if (!ensureAuth()) return;
-  // Drain commands only once we can actually send them.
+  // Drain commands only once we can actually send them. Stale ones (queued
+  // while offline) are dropped, and any failure resyncs the optimistic UI.
   QItem qi;
-  while (g_q && xQueueReceive(g_q,&qi,0)==pdTRUE) execCmd(qi);
+  while (g_q && xQueueReceive(g_q,&qi,0)==pdTRUE) {
+    if (millis() - qi.at > CMD_MAX_AGE_MS) {
+      Serial.printf("[lm] dropping stale command %d (%lus old)\n",
+                    (int)qi.c, (unsigned long)((millis() - qi.at) / 1000));
+      g_resync = true;
+      if (qi.c == Cmd::SmartStandby) g_resyncSlow = true;
+      if (qi.c == Cmd::Backflush) bfAbortArming();
+      continue;
+    }
+    if (!execCmd(qi)) {
+      g_resync = true;
+      if (qi.c == Cmd::SmartStandby) g_resyncSlow = true;
+      if (qi.c == Cmd::Backflush) bfAbortArming();   // rejected — don't leave UI arming
+    }
+  }
   if (g_state.net < Net::AuthOk) {
     setNet(Net::AuthOk, "");
     discoverSerial();
@@ -628,16 +728,18 @@ void loop() {
   g_ws.loop();
 
   if (g_state.backflush == BackflushStatus::Arming && g_bfNextConfirmPoll &&
-      (int32_t)(millis() - g_bfNextConfirmPoll) >= 0) {
+      reached(g_bfNextConfirmPoll)) {
     g_bfNextConfirmPoll = millis() + cfg::BACKFLUSH_CONFIRM_POLL_MS;
     g_bfResync = true;                  // confirm the arm fast, WS or not
   }
-  if (g_bfResync || millis() > g_nextPoll) {
+  if (g_bfResync || g_resync || reached(g_nextPoll)) {
+    bool force = g_bfResync || g_resync;
+    g_bfResync = false; g_resync = false;
     g_nextPoll = millis() + cfg::POLL_DASHBOARD_MS;
-    if (g_bfResync || !g_wsSubscribed) pollDashboard();   // REST fallback
-    g_bfResync = false;
+    if (force || !g_wsSubscribed) pollDashboard();   // REST fallback
   }
-  if (millis() > g_nextSlowPoll) {
+  if (g_resyncSlow || reached(g_nextSlowPoll)) {
+    g_resyncSlow = false;
     g_nextSlowPoll = millis() + cfg::POLL_SLOW_MS;
     pollSlowState();
   }

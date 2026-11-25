@@ -103,16 +103,11 @@ static void deriveSecret() {
 }
 
 bool init() {
-  bool fresh = false;
-  if (settings.instId.isEmpty()) { settings.instId = uuid4(); fresh = true; }
-  if (!loadOrGenKey()) return false;
-  if (!settings.ecPrivValid) return false;
-  if (fresh || !settings.ecPrivValid) settings.save();
-  else if (fresh == false && settings.ecPrivValid) {
-    // first-boot path may have flipped ecPrivValid above
-  }
-  // ensure persisted if anything was generated
-  settings.save();
+  bool hadId  = !settings.instId.isEmpty();
+  bool hadKey = settings.ecPrivValid;
+  if (!hadId) settings.instId = uuid4();
+  if (!loadOrGenKey() || !settings.ecPrivValid) return false;
+  if (!hadId || !hadKey) settings.save();      // persist freshly generated material
   deriveSecret();
   return true;
 }
@@ -144,9 +139,15 @@ SignedHeaders sign() {
   sha256((const uint8_t*)data.c_str(), data.length(), digest);
 
   uint8_t sig[MBEDTLS_ECDSA_MAX_LEN]; size_t sigLen = 0;
-  mbedtls_ecdsa_write_signature(mbedtls_pk_ec(g_pk), MBEDTLS_MD_SHA256,
-                                digest, 32, sig, &sigLen,
-                                mbedtls_ctr_drbg_random, &g_rng);
+  int rc = mbedtls_ecdsa_write_signature(mbedtls_pk_ec(g_pk), MBEDTLS_MD_SHA256,
+                                         digest, 32, sig, &sigLen,
+                                         mbedtls_ctr_drbg_random, &g_rng);
+  if (rc != 0) {
+    // Leave the signature empty: the server rejects the request, and the log
+    // says why instead of the failure looking like a bad password.
+    Serial.printf("[lm] ECDSA sign failed: -0x%04x\n", (unsigned)-rc);
+    sigLen = 0;
+  }
   h.signature = b64(sig, sigLen);
   return h;
 }

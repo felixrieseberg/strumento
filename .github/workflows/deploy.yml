@@ -3,23 +3,20 @@ name: deploy
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: deploy
+  group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-publish:
+  # Builds on every PR and push, so a broken firmware build shows up before merge.
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,29 +31,43 @@ jobs:
           path: |
             ~/.platformio
             ~/.cache/pip
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', '.github/workflows/deploy.yml') }}
 
+      # Pinned so a new PlatformIO/esptool release can't silently change the build.
       - name: Install PlatformIO
-        run: pip install platformio esptool
+        run: pip install platformio==6.1.19 esptool==5.7.0
 
       - name: Build firmware
         run: pio run
 
       - name: Merge flash image into web/
         run: |
-          python -m esptool --chip esp32 merge_bin \
+          python -m esptool --chip esp32 merge-bin \
             -o web/strumento-m5core2.bin \
-            --flash_mode dio --flash_size 16MB \
+            --flash-mode dio --flash-size 16MB \
             0x1000  .pio/build/m5core2/bootloader.bin \
             0x8000  .pio/build/m5core2/partitions.bin \
             0x10000 .pio/build/m5core2/firmware.bin
           ls -lh web/strumento-m5core2.bin
 
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: web
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -24,7 +24,7 @@ def hdr():
 requests.post(f"{URL}/auth/init",headers={"X-App-Installation-Id":iid,"X-Request-Proof":proof(f"{iid}.{B64(hashlib.sha256(pub).digest())}",sec)},json={"pk":B64(pub)})
 tok=requests.post(f"{URL}/auth/signin",headers=hdr(),json={"username":os.environ["LM_USER"],"password":os.environ["LM_PASS"]}).json()["accessToken"]
 A=lambda:{**hdr(),"Authorization":f"Bearer {tok}"}
-sn=os.environ.get("LM_SN","LM017912")
+sn=os.environ["LM_SN"]
 
 for path in [f"/things/{sn}/stats", f"/things/{sn}/scheduling",
              f"/things/{sn}/stats/CoffeeAndFlushCounter/1"]:

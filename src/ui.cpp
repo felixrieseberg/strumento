@@ -59,6 +59,12 @@ static M5Canvas g_can(&M5.Display);
 static uint32_t g_lastFrame = 0;
 static float    g_shotHold = 0;       // seconds shown briefly after brew ends
 static uint32_t g_shotHoldUntil = 0;  // millis() deadline for the post-shot freeze
+// lastCoffee.time when the current shot began — the shot's own extraction time
+// has only arrived once lastShotAtMs moves past this.
+static int64_t  g_brewPrevShotAt = 0;
+static float    g_lastLiveSec    = 0;   // last live count, fallback for the hold
+static uint32_t g_brewEndAt      = 0;   // millis() brew ended; 0 = not awaiting result
+static constexpr uint32_t SHOT_RESULT_WAIT_MS = 5000;
 static constexpr uint32_t SHOT_HOLD_UNTIL_TAP = UINT32_MAX;
 static float    g_dbgBrewSec = -1;    // <0 = live; ≥0 = forced brewing seconds
 static bool     g_dbgOn      = false; // force "machine on" view on Home
@@ -118,6 +124,24 @@ static String ago(int64_t atMs) {
   if (s<172800) return String((int)(s/3600))+"h";
   return String((int)(s/86400))+"d";
 }
+// Wrap-safe millis() deadline check (millis() wraps every ~49.7 days).
+static inline bool reached(uint32_t now, uint32_t deadline){ return (int32_t)(now-deadline)>=0; }
+
+// Edit one credential on the on-screen keyboard. The cloud task reads these
+// Strings concurrently, so edit a copy and swap it in under the settings lock,
+// then reconnect so the change takes effect (a new account also drops the old
+// machine serial).
+static void editCredential(const char* title, String Settings::*field, bool mask,
+                           bool isAccount){
+  String v; { SettingsLock _l; v = settings.*field; }
+  String before = v;
+  if (keyboardPrompt(M5.Display,title,v,mask) && v != before){
+    { SettingsLock _l; settings.*field = v; settings.save(); }
+    lmcloud::reconnect(isAccount);
+  }
+  g_dirty=true;
+}
+
 static String hhmm(int min){ char b[8]; snprintf(b,sizeof b,"%02d:%02d",min/60,min%60); return b; }
 
 static void applyTimeZone() {
@@ -386,6 +410,7 @@ static void renderBrewing(const lmcloud::State& s){
   float sec = (g_dbgBrewSec>=0) ? g_dbgBrewSec
             : s.brewingStartMs ? (epochMs()-s.brewingStartMs)/1000.0f : g_shotHold;
   if (sec<0) sec=0;
+  if (g_dbgBrewSec<0 && s.brewingStartMs) g_lastLiveSec=sec;
 
   // haptic + tone cue at 25s and 30s — buzz once per threshold per shot
   static int s_buzzedAt = -1;
@@ -648,10 +673,12 @@ static void renderSettings(){
   int y = top - g_ctrlScroll;
   g_can.setClipRect(0,top,W,viewH);
 
-  settingRow(y,"network", settings.wifiSsid,false,[]{ if(keyboardPrompt(M5.Display,"WiFi SSID",settings.wifiSsid)) settings.save(); g_dirty=true; }); y+=36;
-  settingRow(y,"wifi key",settings.wifiPass,true, []{ if(keyboardPrompt(M5.Display,"WiFi password",settings.wifiPass,true)) settings.save(); g_dirty=true; }); y+=36;
-  settingRow(y,"account", settings.lmUser,  false,[]{ if(keyboardPrompt(M5.Display,"La Marzocco e-mail",settings.lmUser)) settings.save(); g_dirty=true; }); y+=36;
-  settingRow(y,"password",settings.lmPass,  true, []{ if(keyboardPrompt(M5.Display,"La Marzocco password",settings.lmPass,true)) settings.save(); g_dirty=true; }); y+=36;
+  String ssid, user;
+  { SettingsLock _l; ssid = settings.wifiSsid; user = settings.lmUser; }
+  settingRow(y,"network", ssid,false,[]{ editCredential("WiFi SSID",&Settings::wifiSsid,false,false); }); y+=36;
+  settingRow(y,"wifi key","",  true, []{ editCredential("WiFi password",&Settings::wifiPass,true,false); }); y+=36;
+  settingRow(y,"account", user,false,[]{ editCredential("La Marzocco e-mail",&Settings::lmUser,false,true); }); y+=36;
+  settingRow(y,"password","",  true, []{ editCredential("La Marzocco password",&Settings::lmPass,true,false); }); y+=36;
   toggleRow(y,"DARK MODE",settings.darkMode,[]{
     settings.darkMode=!settings.darkMode; settings.save();
     g_dark=settings.darkMode; g_dirty=true;
@@ -708,13 +735,17 @@ static void render(){
            s.backflush==lmcloud::BackflushStatus::Off && g_scr!=Screen::Settings){
     // backflush cycles pulse the pump and report Brewing — that's cleaning,
     // not a shot, so don't hijack the chronograph for it
-    g_scr=Screen::Brewing; g_shotHoldUntil=0;        // live brew — cancel any freeze
+    if (g_scr!=Screen::Brewing || g_shotHoldUntil || g_brewEndAt){
+      // a new shot — remember which lastCoffee belongs to the previous one
+      g_brewPrevShotAt=s.lastShotAtMs; g_lastLiveSec=0;
+    }
+    g_scr=Screen::Brewing; g_shotHoldUntil=0; g_brewEndAt=0;  // live brew — cancel any freeze
   }
   else if (g_scr==Screen::Brewing &&
            s.backflush!=lmcloud::BackflushStatus::Off){
     // a cleaning pulse leaked us onto the chronograph (backflush status landed
     // a frame late) — bail without faking a "shot ended" freeze
-    g_shotHoldUntil=0; g_scr=Screen::Home;
+    g_shotHoldUntil=0; g_brewEndAt=0; g_scr=Screen::Home;
   }
   else if (g_scr==Screen::Brewing){
     // Brew ended. The cloud reports the stop a beat after the paddle drops, so
@@ -722,13 +753,27 @@ static void render(){
     // real pour. Snap the dial to LM's authoritative extractionSeconds and hold
     // it on screen briefly, so the last number shown is the machine's own
     // measurement — not the latency-inflated live value.
-    if (g_shotHoldUntil==0 && s.lastShotSec>0){
-      const auto& hold = cfg::shotHoldChoice(settings.shotHoldIndex);
-      g_shotHold=s.lastShotSec;
-      g_shotHoldUntil = hold.seconds ? millis() + hold.seconds * 1000UL : SHOT_HOLD_UNTIL_TAP;
+    // lastCoffee can land a frame after the stop, so until it moves past the
+    // previous shot's, hold the frozen live count and wait briefly for it.
+    if (g_shotHoldUntil==0){
+      uint32_t now=millis();
+      if (!g_brewEndAt){ g_brewEndAt=now?now:1; g_shotHold=g_lastLiveSec; }
+      bool fresh  = s.lastShotSec>0 && s.lastShotAtMs!=g_brewPrevShotAt;
+      bool waited = now-g_brewEndAt > SHOT_RESULT_WAIT_MS;
+      if (fresh) g_shotHold=s.lastShotSec;
+      if ((fresh || waited) && g_shotHold>0){
+        const auto& hold = cfg::shotHoldChoice(settings.shotHoldIndex);
+        uint32_t until = now + hold.seconds * 1000UL;
+        if (until==0 || until==SHOT_HOLD_UNTIL_TAP) until=1;
+        g_shotHoldUntil = hold.seconds ? until : SHOT_HOLD_UNTIL_TAP;
+        g_brewEndAt=0;
+      } else if (waited){
+        g_brewEndAt=0;                                  // nothing to show
+      }
     }
-    if (g_shotHoldUntil==0 ||
-        (g_shotHoldUntil!=SHOT_HOLD_UNTIL_TAP && millis()>=g_shotHoldUntil)){
+    if (g_brewEndAt) { /* still waiting for the machine's extraction time */ }
+    else if (g_shotHoldUntil==0 ||
+        (g_shotHoldUntil!=SHOT_HOLD_UNTIL_TAP && reached(millis(),g_shotHoldUntil))){
       g_shotHoldUntil=0; g_scr=Screen::Home;
     }
   }
@@ -812,7 +857,7 @@ void debugScreen(int n,float arg){
 void tick(){
   M5.update();
   uint32_t now=millis();
-  if (g_vibOffAt && now>=g_vibOffAt){ M5.Power.setVibration(0); g_vibOffAt=0; }
+  if (g_vibOffAt && reached(now,g_vibOffAt)){ M5.Power.setVibration(0); g_vibOffAt=0; }
 
   // ── power button: short-press = AXP power-off ──
   // (skip first ~1.5 s so the wake-up press itself can't read back as a click)
@@ -860,7 +905,7 @@ void tick(){
   }
   if (t.wasReleased() && !g_dragging && !s_swallow){
     if (g_scr==Screen::Brewing && g_shotHoldUntil==SHOT_HOLD_UNTIL_TAP) {
-      g_shotHoldUntil=0; g_scr=Screen::Home; g_dirty=true;
+      g_shotHoldUntil=0; g_brewEndAt=0; g_scr=Screen::Home; g_dirty=true;
     }
     for(auto& b:g_btns) if(t.x>=b.x&&t.x<b.x+b.w&&t.y>=b.y&&t.y<b.y+b.h){
       M5.Speaker.tone(2200,18);
@@ -873,7 +918,7 @@ void tick(){
 
   // ── battery poll (AXP I2C) — 5 s cadence, redraw only on change ──
   static uint32_t s_batAt=0;
-  if (now>=s_batAt){
+  if (reached(now,s_batAt)){
     s_batAt = now+5000;
     int32_t raw=M5.Power.getBatteryLevel();
     int8_t  p = (raw<0||raw>100) ? -1 : (int8_t)raw;   // -1 = hide (no gauge)

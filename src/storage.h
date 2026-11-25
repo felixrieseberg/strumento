@@ -21,8 +21,21 @@ struct Settings {
   void save();
   void factoryReset();
 
+  // The UI (core 1) edits these Strings while the cloud task (core 0) reads
+  // them. Hold the lock around any cross-task String access. Recursive, so
+  // save()/load() may be called while it is held.
+  void lock();
+  void unlock();
+
 private:
   Preferences p_;
 };
 
 extern Settings settings;
+
+struct SettingsLock {
+  SettingsLock()  { settings.lock(); }
+  ~SettingsLock() { settings.unlock(); }
+  SettingsLock(const SettingsLock&) = delete;
+  SettingsLock& operator=(const SettingsLock&) = delete;
+};

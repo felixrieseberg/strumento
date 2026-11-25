@@ -46,7 +46,7 @@ bool keyboardPrompt(M5GFX& d,const char* title,String& value,bool mask){
     d.fillRect(12,32,W-24,28,PAPER); d.drawRect(12,32,W-24,28,BRASS);
     d.setFont(&fonts::FreeMono9pt7b); d.setTextColor(INK);
     String s; if(mask) for(size_t i=0;i<buf.length();++i) s+='*'; else s=buf;
-    if(s.length()>26) s="…"+s.substring(s.length()-25);
+    if(s.length()>26) s=".."+s.substring(s.length()-24);   // GFX fonts are ASCII-only
     d.setTextDatum(middle_left); d.drawString(s,18,46);
     for(auto&k:keys) drawKey(d,k);
   };
