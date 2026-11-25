@@ -89,7 +89,9 @@ bool setSmartStandby(bool enabled, int minutes, bool afterLastBrew);
 bool startBackflush();
 
 // Connectivity nudges
-void reconnect();                   // drop everything and re-auth (after creds edit)
+// Drop everything and re-auth (after a creds edit). newAccount also forgets the
+// machine serial so the new account's machine is auto-discovered.
+void reconnect(bool newAccount = false);
 void uiTick();                      // call from UI loop — flushes debounced commands
 
 }  // namespace lmcloud

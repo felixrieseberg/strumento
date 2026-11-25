@@ -3,9 +3,13 @@
 
 Settings settings;
 static SemaphoreHandle_t s_mtx = nullptr;
-static inline void take(){ if(!s_mtx) s_mtx=xSemaphoreCreateMutex();
-                           xSemaphoreTake(s_mtx,portMAX_DELAY); }
-static inline void give(){ xSemaphoreGive(s_mtx); }
+// Created on first use from setup(), before the cloud task exists.
+static inline void take(){ if(!s_mtx) s_mtx=xSemaphoreCreateRecursiveMutex();
+                           xSemaphoreTakeRecursive(s_mtx,portMAX_DELAY); }
+static inline void give(){ xSemaphoreGiveRecursive(s_mtx); }
+
+void Settings::lock()   { take(); }
+void Settings::unlock() { give(); }
 
 void Settings::load() {
   take();
@@ -51,6 +55,7 @@ void Settings::save() {
 }
 
 void Settings::factoryReset() {
+  take();
   p_.begin("lm", false);
   p_.clear();
   p_.end();
@@ -58,4 +63,5 @@ void Settings::factoryReset() {
   ecPrivValid = false;
   instId = "";
   load();
+  give();
 }

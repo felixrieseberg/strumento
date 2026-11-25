@@ -18,7 +18,7 @@ def request_proof(base: str, secret32: bytes) -> str:
     return B64(hashlib.sha256(work).digest())
 
 def main():
-    user = os.environ["LM_USER"]; pwd = os.environ["LM_PASS"]; sn = os.environ.get("LM_SN", "LM017912")
+    user = os.environ["LM_USER"]; pwd = os.environ["LM_PASS"]; sn = os.environ["LM_SN"]
     inst_id = str(uuid.uuid4()).lower()
     priv = generate_private_key(SECP256R1())
     pub_der = priv.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)

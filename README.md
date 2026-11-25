@@ -47,12 +47,16 @@ desktop running **Chrome or Edge** for the web installer.
 ### First boot
 
 The device will land on the Setup screen. Tap each row and type your WiFi name
-+ password, then your La Marzocco email + password. Leave the serial blank to
-auto-discover. Tap Reconnect and you're done — the boiler dial goes live within
-a few seconds, and pulling the paddle flips to the shot timer.
++ password, then your La Marzocco email + password. The device reconnects as
+soon as you save each one and auto-discovers your machine. The boiler dial goes
+live within a few seconds, and pulling the paddle flips to the shot timer.
 
 Credentials are stored on the device and only used to log into your Wifi
-network and La Marzocco's cloud.
+network and La Marzocco's cloud. They sit unencrypted in the ESP32's flash
+(NVS), so anyone with physical access to the device and a USB cable can read
+them back. Treat the device like a written-down password: don't give it away
+without a factory reset, and consider a La Marzocco password you don't reuse
+elsewhere.
 
 ## Supported machines
 
