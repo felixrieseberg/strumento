@@ -540,9 +540,13 @@ static void renderControls(const lmcloud::State& s){
   // backflush — the cloud only *arms* cleaning; the machine then waits ~15s for
   // the user to move the brew paddle (else it aborts), then pulses water in
   // go/pause cycles. Reflect that state machine so a tap isn't a silent no-op:
-  // START → MOVE PADDLE + countdown (armed) → FLUSHING/CLEANING (pulses) → START.
+  // START → ARMING (waiting on machine) → MOVE PADDLE + countdown (armed)
+  // → FLUSHING/CLEANING (pulses) → START. Never say MOVE PADDLE before the
+  // machine confirms, or a paddle lift just pulls a normal shot.
   tracked(18,y+18,"BACKFLUSH",2,LM_RED,&F_LABEL,middle_left);
-  if (s.backflush==lmcloud::BackflushStatus::Requested){
+  if (s.backflush==lmcloud::BackflushStatus::Arming){
+    tracked(W-18,y+18,"ARMING - WAIT",1,LM_RED,&F_LABEL_SM,middle_right);
+  } else if (s.backflush==lmcloud::BackflushStatus::Requested){
     uint32_t el = millis()-s.bfPhaseAtMs;
     int left = (s.bfPhaseAtMs && el<cfg::BACKFLUSH_ARM_MS)
                ? (int)((cfg::BACKFLUSH_ARM_MS-el+999)/1000) : 0;

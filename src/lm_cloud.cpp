@@ -105,10 +105,9 @@ static BackflushStatus parseBackflush(const char* s) {
   if (!strcmp(s,"Cleaning"))  return BackflushStatus::Cleaning;
   return BackflushStatus::Off;
 }
-// Set when the user arms backflush, so a stale "Off" dashboard frame that was
-// in flight before the command landed can't immediately clear the optimistic
-// "Requested" state. Written by UI thread, read by cloud thread (32-bit atomic).
-static volatile uint32_t g_bfHoldUntil = 0;
+// Next fast REST poll while Arming — WS pushes can be late or missing, and the
+// user must not be told to move the paddle until the machine is really armed.
+static uint32_t g_bfNextConfirmPoll = 0;
 // Set when the local arm-window expiry fires, so a stale dashboard frame still
 // reporting "Requested" can't re-arm the countdown in a loop. Cleared by a
 // fresh user arm (UI thread, 32-bit atomic).
@@ -123,6 +122,12 @@ static void bfSet(BackflushStatus bs) {
   if (bs != g_state.backflush)
     g_state.bfPhaseAtMs = (bs == BackflushStatus::Off) ? 0 : millis();
   g_state.backflush = bs;
+}
+
+// The arm command was rejected or dropped — leave Arming, never show MOVE PADDLE.
+static void bfAbortArming() {
+  StateLock _l;
+  if (g_state.backflush == BackflushStatus::Arming) { bfSet(BackflushStatus::Off); changed(); }
 }
 
 static bool pending(Cmd c);   // fwd — defined in debounce section
@@ -167,10 +172,11 @@ static void applyWidgets(JsonArrayConst widgets) {
       if (!o["lastCleaningStartTime"].isNull())
         g_state.lastCleanMs = (int64_t)(o["lastCleaningStartTime"].as<double>());
       BackflushStatus bs = parseBackflush(o["status"] | "Off");
-      // Don't let a stale "Off" stomp the just-armed optimistic "Requested",
-      // and don't let a stale "Requested" re-arm right after a local expiry.
-      if (!(bs == BackflushStatus::Off && g_bfHoldUntil &&
-            (int32_t)(millis() - g_bfHoldUntil) < 0) &&
+      // While Arming, "Off" just means the command hasn't reached the machine
+      // yet (loop() times Arming out). Don't let a stale "Requested" re-arm
+      // right after a local expiry either.
+      if (!(bs == BackflushStatus::Off &&
+            g_state.backflush == BackflushStatus::Arming) &&
           !(bs == BackflushStatus::Requested && g_bfReqIgnoreUntil &&
             (int32_t)(millis() - g_bfReqIgnoreUntil) < 0))
         bfSet(bs);
@@ -454,8 +460,10 @@ bool setSmartStandby(bool en,int min,bool afterBrew){
   changed(); enqDebounced(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
 }
 bool startBackflush() {
-  { StateLock _l; bfSet(BackflushStatus::Requested); }
-  g_bfHoldUntil = millis() + 2500;   // bridge the optimistic→cloud-confirm gap
+  // Not optimistic "Requested": the machine only runs the pulsed clean if the
+  // paddle is lifted *after* it's armed. Showing MOVE PADDLE on tap had people
+  // lift it before the command landed, which just pulls a normal shot.
+  { StateLock _l; bfSet(BackflushStatus::Arming); }
   g_bfReqIgnoreUntil = 0;            // fresh arm — accept cloud confirms again
   { StateLock _l; changed(); }
   enq(Cmd::Backflush); return true;
@@ -495,7 +503,9 @@ static bool execCmd(const QItem& i){
       b["after"]=(i.f2>0.5f)?"LastBrewing":"PowerOn";
       ok=sendCommand("CoffeeMachineSettingSmartStandBy",b); break;
     case Cmd::Backflush:  b["enabled"]=true;
-                          ok=sendCommand("CoffeeMachineBackFlushStartCleaning",b); break;
+                          ok=sendCommand("CoffeeMachineBackFlushStartCleaning",b);
+                          if (ok) g_bfNextConfirmPoll = millis() + 1000;
+                          break;   // failure: loop() drops Arming back to Off
     case Cmd::Reconnect:
       g_ws.disconnect(); WiFi.disconnect(true,false);
       g_access=""; g_refresh=""; g_registered=false; g_wsSubscribed=false;
@@ -671,7 +681,9 @@ void loop() {
     StateLock _l;
     uint32_t ph = g_state.bfPhaseAtMs, el = millis() - ph;
     if (ph &&
-        ((g_state.backflush == BackflushStatus::Requested &&
+        ((g_state.backflush == BackflushStatus::Arming &&
+          el > cfg::BACKFLUSH_CONFIRM_MS) ||
+         (g_state.backflush == BackflushStatus::Requested &&
           el > cfg::BACKFLUSH_ARM_MS + cfg::BACKFLUSH_ARM_GRACE_MS) ||
          (g_state.backflush == BackflushStatus::Cleaning &&
           el > cfg::BACKFLUSH_CLEAN_MAX_MS))) {
@@ -694,15 +706,13 @@ void loop() {
                     (int)qi.c, (unsigned long)((millis() - qi.at) / 1000));
       g_resync = true;
       if (qi.c == Cmd::SmartStandby) g_resyncSlow = true;
+      if (qi.c == Cmd::Backflush) bfAbortArming();
       continue;
     }
     if (!execCmd(qi)) {
       g_resync = true;
       if (qi.c == Cmd::SmartStandby) g_resyncSlow = true;
-      if (qi.c == Cmd::Backflush) {
-        g_bfHoldUntil = 0;
-        StateLock _l; bfSet(BackflushStatus::Off); changed();
-      }
+      if (qi.c == Cmd::Backflush) bfAbortArming();   // rejected — don't leave UI arming
     }
   }
   if (g_state.net < Net::AuthOk) {
@@ -717,6 +727,11 @@ void loop() {
 
   g_ws.loop();
 
+  if (g_state.backflush == BackflushStatus::Arming && g_bfNextConfirmPoll &&
+      reached(g_bfNextConfirmPoll)) {
+    g_bfNextConfirmPoll = millis() + cfg::BACKFLUSH_CONFIRM_POLL_MS;
+    g_bfResync = true;                  // confirm the arm fast, WS or not
+  }
   if (g_bfResync || g_resync || reached(g_nextPoll)) {
     bool force = g_bfResync || g_resync;
     g_bfResync = false; g_resync = false;
