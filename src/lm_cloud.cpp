@@ -84,10 +84,9 @@ static BackflushStatus parseBackflush(const char* s) {
   if (!strcmp(s,"Cleaning"))  return BackflushStatus::Cleaning;
   return BackflushStatus::Off;
 }
-// Set when the user arms backflush, so a stale "Off" dashboard frame that was
-// in flight before the command landed can't immediately clear the optimistic
-// "Requested" state. Written by UI thread, read by cloud thread (32-bit atomic).
-static volatile uint32_t g_bfHoldUntil = 0;
+// Next fast REST poll while Arming — WS pushes can be late or missing, and the
+// user must not be told to move the paddle until the machine is really armed.
+static uint32_t g_bfNextConfirmPoll = 0;
 // Set when the local arm-window expiry fires, so a stale dashboard frame still
 // reporting "Requested" can't re-arm the countdown in a loop. Cleared by a
 // fresh user arm (UI thread, 32-bit atomic).
@@ -146,10 +145,11 @@ static void applyWidgets(JsonArrayConst widgets) {
       if (!o["lastCleaningStartTime"].isNull())
         g_state.lastCleanMs = (int64_t)(o["lastCleaningStartTime"].as<double>());
       BackflushStatus bs = parseBackflush(o["status"] | "Off");
-      // Don't let a stale "Off" stomp the just-armed optimistic "Requested",
-      // and don't let a stale "Requested" re-arm right after a local expiry.
-      if (!(bs == BackflushStatus::Off && g_bfHoldUntil &&
-            (int32_t)(millis() - g_bfHoldUntil) < 0) &&
+      // While Arming, "Off" just means the command hasn't reached the machine
+      // yet (loop() times Arming out). Don't let a stale "Requested" re-arm
+      // right after a local expiry either.
+      if (!(bs == BackflushStatus::Off &&
+            g_state.backflush == BackflushStatus::Arming) &&
           !(bs == BackflushStatus::Requested && g_bfReqIgnoreUntil &&
             (int32_t)(millis() - g_bfReqIgnoreUntil) < 0))
         bfSet(bs);
@@ -411,8 +411,10 @@ bool setSmartStandby(bool en,int min,bool afterBrew){
   changed(); enqDebounced(Cmd::SmartStandby,en,(float)min,afterBrew?1.f:0.f); return true;
 }
 bool startBackflush() {
-  { StateLock _l; bfSet(BackflushStatus::Requested); }
-  g_bfHoldUntil = millis() + 2500;   // bridge the optimistic→cloud-confirm gap
+  // Not optimistic "Requested": the machine only runs the pulsed clean if the
+  // paddle is lifted *after* it's armed. Showing MOVE PADDLE on tap had people
+  // lift it before the command landed, which just pulls a normal shot.
+  { StateLock _l; bfSet(BackflushStatus::Arming); }
   g_bfReqIgnoreUntil = 0;            // fresh arm — accept cloud confirms again
   changed(); enq(Cmd::Backflush); return true;
 }
@@ -445,7 +447,13 @@ static void execCmd(const QItem& i){
       b["after"]=(i.f2>0.5f)?"LastBrewing":"PowerOn";
       sendCommand("CoffeeMachineSettingSmartStandBy",b); break;
     case Cmd::Backflush:  b["enabled"]=true;
-                          sendCommand("CoffeeMachineBackFlushStartCleaning",b); break;
+                          if (!sendCommand("CoffeeMachineBackFlushStartCleaning",b)) {
+                            StateLock _l;      // rejected — don't leave UI arming
+                            if (g_state.backflush == BackflushStatus::Arming) {
+                              bfSet(BackflushStatus::Off); changed();
+                            }
+                          } else g_bfNextConfirmPoll = millis() + 1000;
+                          break;
     case Cmd::Reconnect:
       g_ws.disconnect(); WiFi.disconnect(true,false);
       g_access=""; g_refresh=""; g_registered=false; g_wsSubscribed=false;
@@ -588,7 +596,9 @@ void loop() {
     StateLock _l;
     uint32_t ph = g_state.bfPhaseAtMs, el = millis() - ph;
     if (ph &&
-        ((g_state.backflush == BackflushStatus::Requested &&
+        ((g_state.backflush == BackflushStatus::Arming &&
+          el > cfg::BACKFLUSH_CONFIRM_MS) ||
+         (g_state.backflush == BackflushStatus::Requested &&
           el > cfg::BACKFLUSH_ARM_MS + cfg::BACKFLUSH_ARM_GRACE_MS) ||
          (g_state.backflush == BackflushStatus::Cleaning &&
           el > cfg::BACKFLUSH_CLEAN_MAX_MS))) {
@@ -617,6 +627,11 @@ void loop() {
 
   g_ws.loop();
 
+  if (g_state.backflush == BackflushStatus::Arming && g_bfNextConfirmPoll &&
+      (int32_t)(millis() - g_bfNextConfirmPoll) >= 0) {
+    g_bfNextConfirmPoll = millis() + cfg::BACKFLUSH_CONFIRM_POLL_MS;
+    g_bfResync = true;                  // confirm the arm fast, WS or not
+  }
   if (g_bfResync || millis() > g_nextPoll) {
     g_nextPoll = millis() + cfg::POLL_DASHBOARD_MS;
     if (g_bfResync || !g_wsSubscribed) pollDashboard();   // REST fallback
