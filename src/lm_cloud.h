@@ -11,7 +11,9 @@ enum class BoilerStatus  : uint8_t { Unknown, Off, StandBy, HeatingUp, Ready, No
 enum class PreMode       : uint8_t { Disabled, PreBrewing, PreInfusion };
 // CMBackFlush.status — cloud only *arms* cleaning (Requested); the user must
 // then move the brew paddle to actually run it (Cleaning), or it reverts to Off.
-enum class BackflushStatus : uint8_t { Off, Requested, Cleaning };
+// Arming is local-only: the command is in flight and the machine hasn't confirmed
+// Requested yet. Lifting the paddle now would pull a normal shot, not a clean.
+enum class BackflushStatus : uint8_t { Off, Requested, Cleaning, Arming };
 
 struct WakeSched {
   String  id;
